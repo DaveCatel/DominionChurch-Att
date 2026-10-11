@@ -1,9 +1,23 @@
+import { useEffect, useState } from 'react'
+import { mediaUrl } from '../lib/media'
+
 const COLORS = ['#0a0a0a', '#26262b', '#3f3f46', '#52525b', '#18181b', '#2e2e33']
 
 export default function Avatar({ user, size = 40 }) {
+  const [broken, setBroken] = useState(false)
+  useEffect(() => setBroken(false), [user.profile_photo_url])
   const style = { width: size, height: size, fontSize: size * 0.4 }
-  if (user.profile_photo_url) {
-    return <img className="avatar" style={style} src={user.profile_photo_url} alt={user.full_name} />
+  // if the picture cannot be loaded (for example an old file lost on a server restart) show initials
+  if (user.profile_photo_url && !broken) {
+    return (
+      <img
+        className="avatar"
+        style={style}
+        src={mediaUrl(user.profile_photo_url)}
+        alt={user.full_name}
+        onError={() => setBroken(true)}
+      />
+    )
   }
   const initials = user.full_name
     .split(/\s+/)

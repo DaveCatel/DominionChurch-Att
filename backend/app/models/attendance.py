@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     Float,
     ForeignKey,
@@ -97,6 +98,13 @@ class AttendanceRecord(
     # comma separated reasons an admin should look at this record, for example
     # "FAR_FROM_VENUE,NEW_DEVICE"; review_status is OK, NEEDS_REVIEW or APPROVED
     verification_flags: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # true when the member confirmed this check-in with their fingerprint / face
+    passkey_verified: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
     review_status: Mapped[str] = mapped_column(
         String(20),
         nullable=False,

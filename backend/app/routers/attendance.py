@@ -15,10 +15,11 @@ from app.models import (
     ServiceTemplate,
     Department,
     User,
+    Passkey,
     UserDepartment,
     UserDevice,
 )
-from app.core.ratelimit import code_failures
+from app.core.ratelimit import code_failures, passkey_failures
 from app.schemas import ClockIn, HistoryItem, ServiceCard, TodayOut
 from app.services.checkin import (
     FLAG_NEW_DEVICE,
@@ -26,12 +27,27 @@ from app.services.checkin import (
     check_location,
     code_is_valid,
 )
+from app.services.passkeys import PasskeyError, StoredPasskey, verify_assertion
 from app.services.scheduling import attendance_state, church_tz, ensure_occurrences, window
 
 router = APIRouter(prefix="/attendance", tags=["attendance"])
 
 
-def _card(occ, template, record, now, tz) -> ServiceCard:
+def _passkey_step(template, has_passkey: bool) -> str:
+    """What the member still has to do about the fingerprint / face check for this service."""
+    mode = template.passkey_mode
+    if mode == "REQUIRED":
+        return "ASSERT" if has_passkey else "ENROLL"
+    if mode == "IF_ENROLLED" and has_passkey:
+        return "ASSERT"
+    return "NONE"
+
+
+def _has_passkey(db: Session, user: User) -> bool:
+    return bool(db.scalar(select(func.count(Passkey.id)).where(Passkey.user_id == user.id)))
+
+
+def _card(occ, template, record, now, tz, has_passkey: bool = False) -> ServiceCard:
     opens, _ = window(occ, tz)
     return ServiceCard(
         occurrence_id=occ.id,
@@ -46,6 +62,7 @@ def _card(occ, template, record, now, tz) -> ServiceCard:
         clock_in=record.clock_in if record else None,
         clock_out=record.clock_out if record else None,
         verification_mode=template.verification_mode,
+        passkey_step=_passkey_step(template, has_passkey),
     )
 
 
@@ -153,7 +170,8 @@ def today(user: User = Depends(get_current_user), db: Session = Depends(get_db))
             )
         )
     }
-    cards = [_card(o, t, records.get(o.id), now, tz) for o, t in rows]
+    has_passkey = _has_passkey(db, user)
+    cards = [_card(o, t, records.get(o.id), now, tz, has_passkey) for o, t in rows]
     return TodayOut(
         server_time=now,
         timezone=str(tz),
@@ -177,6 +195,44 @@ def _require_valid_code(user: User, occurrence_id: uuid.UUID, code: str | None) 
         raise HTTPException(
             400, "That code is wrong or has expired. Look at the screen at church for the new one."
         )
+
+
+def _verify_passkey(
+    db: Session, user: User, occ: ServiceOccurrence, template, payload: dict | None, now: datetime
+) -> bool:
+    """The fingerprint / face check. Returns True when it was done and passed.
+
+    IF_ENROLLED: members who set a passkey up must use it, others check in as before.
+    REQUIRED: everyone must have one. A friend who knows your password still cannot pass
+    this, because the check happens on your phone and needs your fingerprint or face."""
+    mode = template.passkey_mode
+    if mode == "OFF":
+        return False
+    passkeys = list(db.scalars(select(Passkey).where(Passkey.user_id == user.id)))
+    if not passkeys:
+        if mode == "REQUIRED":
+            raise HTTPException(
+                403,
+                "This service needs fingerprint or face check-in. Set it up on your profile page "
+                "first, or ask an usher to mark you present.",
+            )
+        return False
+    if not payload:
+        raise HTTPException(400, "Confirm with your fingerprint or face to check in.")
+
+    key = str(user.id)
+    passkey_failures.check(key)  # 429 after too many failures
+    stored = {p.credential_id: StoredPasskey(p.public_key, p.alg, p.sign_count) for p in passkeys}
+    try:
+        result = verify_assertion(payload, "clock_in", user.id, occ.id, stored)
+    except PasskeyError as exc:
+        passkey_failures.hit(key)
+        raise HTTPException(400, str(exc))
+    for p in passkeys:
+        if p.credential_id == result.credential_id:
+            p.sign_count = result.sign_count
+            p.last_used_at = now
+    return True
 
 
 def _identify_device(
@@ -263,8 +319,11 @@ def clock_in(
     distance = None
     if mode in ("CODE", "CODE_LOCATION"):
         _require_valid_code(user, occ.id, body.code)
+    passkey_ok = _verify_passkey(db, user, occ, template, body.passkey, now)
+    if mode in ("CODE", "CODE_LOCATION"):
         device, device_flags = _identify_device(db, user, occ, body.device_token, request, now)
-        flags += device_flags
+        # a fingerprint/face check already proved who this is, so a new phone is not suspicious
+        flags += [f for f in device_flags if not (passkey_ok and f == FLAG_NEW_DEVICE)]
     if mode == "CODE_LOCATION":
         church = user.church
         location_flags, distance = check_location(
@@ -292,6 +351,7 @@ def clock_in(
         accuracy_m=body.accuracy_m if mode == "CODE_LOCATION" else None,
         distance_m=distance,
         ip_address=_client_ip(request) if mode != "NONE" else None,
+        passkey_verified=passkey_ok,
         verification_flags=",".join(flags) or None,
         review_status="NEEDS_REVIEW" if flags else "OK",
     )
@@ -301,7 +361,7 @@ def clock_in(
     except IntegrityError:
         db.rollback()
         raise HTTPException(409, "You have already clocked in to this service")
-    return _card(occ, template, record, now, tz)
+    return _card(occ, template, record, now, tz, _has_passkey(db, user))
 
 
 @router.post("/clock-out", response_model=ServiceCard)
@@ -322,7 +382,7 @@ def clock_out(body: ClockIn, user: User = Depends(get_current_user), db: Session
     record.clock_out_device_time = body.device_time
     record.clock_out_source = "ONLINE"
     db.commit()
-    return _card(occ, template, record, now, tz)
+    return _card(occ, template, record, now, tz, _has_passkey(db, user))
 
 
 @router.get("/me", response_model=list[HistoryItem])

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import ChangePassword from '../components/ChangePassword.jsx'
+import PasskeySetup from '../components/PasskeySetup.jsx'
 import { useAuth } from '../auth.jsx'
 import Avatar from '../components/Avatar.jsx'
 import { dayLabel, time } from '../format'
@@ -136,6 +137,8 @@ export default function Profile() {
           </button>
         </section>
       )}
+
+      <PasskeySetup />
 
       <h2>My departments</h2>
       {deptError && <p className="error">{deptError}</p>}

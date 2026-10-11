@@ -5,7 +5,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
-from app.routers import account, attendance, auth, checkin, departments, members, services, users
+from app.routers import (
+    account,
+    attendance,
+    auth,
+    checkin,
+    departments,
+    members,
+    passkeys,
+    services,
+    users,
+)
 
 production = settings.ENVIRONMENT == "production"
 app = FastAPI(
@@ -33,6 +43,7 @@ for router in (
     members.router,
     account.router,
     checkin.router,
+    passkeys.router,
 ):
     app.include_router(router, prefix="/api")
 
@@ -46,6 +57,10 @@ async def security_headers(request, call_next):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "no-referrer")
+    if request.url.path.startswith("/api/"):
+        # Never cache API answers. The check-in code changes every 30 seconds and everything
+        # else is personal, and hosts such as Vercel can cache proxied responses.
+        response.headers.setdefault("Cache-Control", "no-store")  # a route may set its own
     return response
 
 

@@ -13,6 +13,8 @@ from app.models.attendance import AttendanceRecord
 from app.models.device import UserDevice
 from app.models.auth import AuthSession
 from app.models.password_reset import PasswordResetToken
+from app.models.passkey import Passkey
+from app.models.avatar import UserAvatar
 from app.models.sync import SyncEvent
 from app.models.audit_log import AuditLog
 
@@ -31,6 +33,8 @@ __all__ = [
     "UserDevice",
     "AuthSession",
     "PasswordResetToken",
+    "Passkey",
+    "UserAvatar",
     "SyncEvent",
     "AuditLog",
 ]

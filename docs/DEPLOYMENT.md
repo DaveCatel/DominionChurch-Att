@@ -3,6 +3,136 @@
 This is a practical checklist for putting the app on a real server. Nothing here is needed
 for development on your own computer.
 
+## Hosting on Render (API) and Vercel (website)
+
+Sections 1 to 7 below describe one self-managed server. If you use **Render for the backend
+and Vercel for the website**, read this section first; it replaces the parts of 1 to 4 that
+do not apply.
+
+Two layouts work. **Yours is the first:** the website calls the Render address directly.
+
+```
+A (direct)   phone browser -> Vercel (the website only)
+             phone browser -> Render (FastAPI, address set in VITE_API_URL) -> PostgreSQL
+B (proxy)    phone browser -> Vercel (website + a rewrite of /api/*) -> Render -> PostgreSQL
+```
+
+### Vercel (layout A, direct)
+
+- In Vercel, set the environment variable `VITE_API_URL` to your Render address with no slash
+  at the end and without `/api`, for example `https://church-attendance-api.onrender.com`, and
+  redeploy the website (Vite reads it when it builds).
+- On Render, set `CORS_ORIGINS` to include your Vercel address (see the table below).
+- `web/vercel.json` only needs the rule that opens the app for every path, so that a
+  QR-code link to `/checkin`, a reset link to `/reset-password` or a refresh on `/admin`
+  does not show a 404. A file with a single rewrite from `/(.*)` to `/` does this.
+- Pictures (profile photos) are loaded from the Render address too; the app adds
+  `VITE_API_URL` in front of the picture's path for you.
+
+### Vercel (layout B, proxy; only if you choose it)
+
+Leave `VITE_API_URL` empty and forward `/api` to Render. The order matters, first match wins:
+
+```json
+{
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "https://YOUR-SERVICE.onrender.com/api/:path*" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}
+```
+
+Vercel sets the visitor's real address in `x-forwarded-for` on these forwarded requests.
+
+### Render: environment variables
+
+| Variable | Value |
+|---|---|
+| `DATABASE_URL` | your Postgres address, starting `postgresql+psycopg://` |
+| `SECRET_KEY` | a long random string (run `python -c "import secrets; print(secrets.token_urlsafe(48))"`) |
+| `ENVIRONMENT` | `production` (the server then refuses a `SECRET_KEY` shorter than 32 characters) |
+| `WEB_BASE_URL` | your **production** Vercel address, e.g. `https://church-attendance.vercel.app`, with no slash at the end. Reset links, QR codes and passkeys all depend on it |
+| `CORS_ORIGINS` | `["https://church-attendance.vercel.app"]` |
+| `FORWARDED_ALLOW_IPS` | `*`. Without it the server sees Render's internal address for everyone, so the signup and password-reset limits would count the whole church as one person |
+| `EMAIL_FROM` and `BREVO_API_KEY` (or `RESEND_API_KEY`) | see "Email on Render" below |
+
+Render settings: root directory `backend`; build command `pip install -r requirements.txt`
+(this installs the new `cryptography` and `Pillow` packages);
+start command:
+
+```
+alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+```
+
+Putting `alembic upgrade head` in the start command applies any new database change every
+time the service starts (it does nothing when the database is already up to date), which
+suits the free plan, where there is no separate pre-deploy command.
+
+### Upgrading safely
+
+The database changes in these updates only **add** columns and tables, so the old backend keeps
+working while you upgrade. In this order:
+
+1. Update the database: from your computer, in the `backend` folder with the venv active,
+   set `DATABASE_URL` to Render's **external** database address and run `alembic upgrade head`.
+   (Or skip this step and let the new start command do it on the next deploy.)
+2. Deploy the backend to Render and wait for it to be live.
+3. Deploy the website to Vercel.
+
+Deploying the new backend code to a database that has not been upgraded makes most pages fail.
+
+### Email on Render
+
+Render's **free plan blocks outgoing email over SMTP** (ports 25, 465 and 587), so password
+reset and approval emails would silently never arrive. Use a provider that sends over the
+web instead:
+
+- **Brevo** (free tier, can send from one verified address without owning a domain):
+  create an account, add and verify a sender address, create an API key, then set
+  `BREVO_API_KEY` and `EMAIL_FROM` (the verified address, for example
+  `Church Attendance <you@example.org>`) on Render.
+- **Resend**: set `RESEND_API_KEY` and `EMAIL_FROM`. To email people other than yourself it
+  needs a domain you own and have verified with them.
+
+If a provider refuses an email (for example, the sender is not verified), the reason is
+written to the Render logs.
+
+### Free plan: it falls asleep
+
+A free Render service goes to sleep after a period of no traffic, and the first request
+afterwards can take up to a minute (it may fail once through Vercel). On a Sunday, that is a
+member arriving at the door. Options: upgrade to a paid instance, or point a free uptime
+monitor (such as UptimeRobot) at `https://<your-vercel-address>/api/health` every 5 minutes.
+The check-in screen asks the server every 10 seconds, so open it 10 minutes before the
+service starts to wake the server first.
+
+The free plan also **loses saved files on every restart**. Profile photos are therefore stored in
+the database (resized to a small square), not on the disk, so they survive. Photos uploaded
+before this change were files on the disk and may already be gone; the app then shows the
+member's initials until they upload a new one.
+
+### Fingerprint check-in on Vercel
+
+Passkeys are tied to the exact website address, so `WEB_BASE_URL` must be your production
+Vercel address, and everyone must use that address (not a preview link such as
+`...-git-branch-...vercel.app`). If you later move to your own domain, every member must set
+up their fingerprint check-in again, so decide on the domain before rolling it out.
+
+### Test the hosted site
+
+1. Open your Render address followed by `/api/health` (for example
+   `https://church-attendance-api.onrender.com/api/health`): it should answer.
+2. Open `https://<your-vercel-address>/checkin` and refresh: it should show the app or the
+   sign-in page, not a 404.
+3. Forgot password: the email should arrive. If not, read the Render logs.
+4. On a phone: Profile > "Set up on this phone", then clock in to a service that requires it.
+5. Open the check-in screen on a computer, scan the QR code with a phone, and confirm it
+   checks in. Wait a minute and check the code on the screen has changed.
+6. In the browser's developer tools (Network tab), an `/api/...` response should show
+   `Cache-Control: no-store`.
+7. Profile: upload a photo. It should appear straight away and still be there after
+   the Render service has restarted or woken from sleep.
+
 ## 1. Where to host it
 
 The simplest setup for one church is **one small Linux server (VPS)** that runs everything:
@@ -113,6 +243,37 @@ Each service can require the code shown on a screen at church, plus a location c
 - The server must see each member's real address (the `--proxy-headers` option in section 4)
   for the address saved with each check-in to be meaningful.
 
+## 4b. Fingerprint / face check-in (passkeys)
+
+Members can set up their phone's fingerprint, face or screen lock on their Profile page.
+A service can then require it (Admin > Services > Fingerprint or face check), which stops
+someone checking in as a friend even if they know the friend's password.
+
+- **Install the new dependency:** `pip install -r requirements.txt` (adds `cryptography`).
+- **The address must be right.** A passkey is tied to the website's domain. The app works
+  out the domain from `WEB_BASE_URL`, so `WEB_BASE_URL` must be exactly the address people
+  use, for example `https://attendance.yourchurch.org`. Passkeys need `https://`, except on
+  `localhost`. If you ever **change the domain, every member's passkey stops working** and
+  they must set it up again, so choose the domain before rolling this out. (Override with
+  `WEBAUTHN_RP_ID` and `WEBAUTHN_ORIGINS` only if you serve the app from several addresses.)
+- **Testing on your own computer:** open the app at `http://localhost:5173` (not
+  `127.0.0.1` and not your network address) and keep `WEB_BASE_URL=http://localhost:5173`.
+  Chrome will then offer Windows Hello, a PIN or a security key.
+- **Testing on a phone:** phones need `https://`. Put the dev server behind a tunnel
+  (for example `cloudflared` or `ngrok`), set `WEB_BASE_URL` to the tunnel address, restart the
+  backend, and open the tunnel address on the phone. Vite may need `server: { allowedHosts: true }`
+  in `web/vite.config.js` to accept the tunnel's hostname.
+- **Rolling it out:** start services on "For members who set it up". Ask members to set it up
+  while they are at church (an usher can watch). When most have, switch to "Required".
+- **Who can change a passkey:** a member can add a second phone only by confirming with the
+  first one. They cannot remove one. An admin removes them from Admin > Members > "Reset
+  passkeys" (lost phone, or if you suspect someone set one up on another person's account).
+- **The weak moment is the first set-up.** If a friend knows someone's password and sets up
+  a passkey on that account before the owner does, the account is bound to the friend's
+  phone. Setting up in person, and checking Admin > Members for who has one, closes that gap.
+- Synced passkeys (iCloud Keychain, Google Password Manager) work and follow the member to a
+  new phone signed in to the same account.
+
 ## 5. Database changes (migrations)
 
 From now on, a change to a model is applied with Alembic instead of a hand-run script.
@@ -129,6 +290,9 @@ Always back up (section 7) before upgrading a live database. Autogenerate only s
 changes; read each one before you apply it.
 
 ## 6. Email (password resets and approval notices)
+
+If your host blocks SMTP (Render's free plan does), use `BREVO_API_KEY` or `RESEND_API_KEY`
+instead; see "Email on Render" at the top of this guide. They work with `EMAIL_FROM` as the sender.
 
 The app sends mail over SMTP. Pick any provider that gives you SMTP details: Brevo, Mailgun,
 Amazon SES, Zoho, or a Gmail/Google Workspace account with an app password. Put the host,

@@ -15,12 +15,19 @@ const EMPTY = {
   end_date: '',
   department_ids: [],
   verification_mode: 'CODE_LOCATION',
+  passkey_mode: 'OFF',
 }
 
 const VERIFY = {
   NONE: 'Check-in: off',
   CODE: 'Check-in: code',
   CODE_LOCATION: 'Check-in: code + location',
+}
+
+const PASSKEY = {
+  OFF: '',
+  IF_ENROLLED: ' · Fingerprint: if set up',
+  REQUIRED: ' · Fingerprint: required',
 }
 
 const hhmm = (t) => (t ? t.slice(0, 5) : '')
@@ -38,6 +45,7 @@ const fromService = (s) => ({
   end_date: s.last_date || '',
   department_ids: s.department_ids || [],
   verification_mode: s.verification_mode || 'NONE',
+  passkey_mode: s.passkey_mode || 'OFF',
 })
 
 // One form for both creating (no `service`) and editing (`service` given).
@@ -64,6 +72,7 @@ export function ServiceForm({ service, departments, locationSet, onSaved, onCanc
   function createBody() {
     const body = {
       verification_mode: f.verification_mode,
+      passkey_mode: f.passkey_mode,
       department_ids: restrict ? f.department_ids : [],
       name: f.name,
       description: f.description || null,
@@ -89,6 +98,7 @@ export function ServiceForm({ service, departments, locationSet, onSaved, onCanc
     if (f.start_time !== initial.start_time) body.start_time = f.start_time
     if (f.end_time !== initial.end_time) body.end_time = f.end_time || null
     if (f.verification_mode !== initial.verification_mode) body.verification_mode = f.verification_mode
+    if (f.passkey_mode !== initial.passkey_mode) body.passkey_mode = f.passkey_mode
     const ids = restrict ? f.department_ids : []
     if (!sameIds(ids, initial.department_ids)) body.department_ids = ids
     if (f.is_recurring) {
@@ -253,6 +263,28 @@ export function ServiceForm({ service, departments, locationSet, onSaved, onCanc
           </p>
         )}
       </fieldset>
+      <fieldset className="who">
+        <legend>Fingerprint or face check</legend>
+        {[
+          ['OFF', 'Off', 'No fingerprint or face check.'],
+          ['IF_ENROLLED', 'For members who set it up', 'Best while you roll it out: members who have set it up must use it, others check in as before.'],
+          ['REQUIRED', 'Required', 'Everyone must set it up on their profile first. Anyone without it can be marked present by an admin.'],
+        ].map(([value, title, help]) => (
+          <label className="check-item" key={value}>
+            <input
+              type="radio"
+              name={`passkey-${service?.id || 'new'}`}
+              checked={f.passkey_mode === value}
+              onChange={() => setF({ ...f, passkey_mode: value })}
+            />
+            <span>
+              {title}
+              <span className="muted small"> · {help}</span>
+            </span>
+          </label>
+        ))}
+        <p className="muted small">It stops someone checking in as a friend, because only the real phone unlocked by its owner can confirm.</p>
+      </fieldset>
       {editing && (
         <p className="muted small">
           Changes to the day or time apply to upcoming sessions nobody has clocked in to yet. Past
@@ -394,7 +426,7 @@ export default function ServicesTab() {
                   <div><span className="service-meta-label">Type</span><strong>{({ SERVICE: 'Service', MEETING: 'Meeting', EVENT: 'Event' })[s.service_type] || s.service_type}</strong></div>
                   <div><span className="service-meta-label">Attendance access</span><strong>{who(s)}</strong></div>
                 </div>
-                <p className="service-verification">{VERIFY[s.verification_mode] || 'Check-in: off'}</p>
+                <p className="service-verification">{VERIFY[s.verification_mode] || 'Check-in: off'}{PASSKEY[s.passkey_mode] || ''}</p>
               </div>
               <div className="service-management-actions">
                 <button className="btn btn-primary" onClick={() => navigate(`/admin/services/${s.id}/edit`)}>Edit service</button>

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import { time } from '../format'
 import { getDeviceToken, getLocation } from '../lib/device'
+import { assertPasskey, enrollPasskey, passkeysSupported } from '../lib/webauthn'
 
 export const BADGE = {
   upcoming: 'Later today',
@@ -21,6 +22,9 @@ export default function ServiceCard({ service: s, onChange, autoCode = '' }) {
   const [showCode, setShowCode] = useState(!!autoCode)
   const [code, setCode] = useState(autoCode)
   const autoRan = useRef(false)
+  // NONE | ASSERT (confirm with fingerprint/face) | ENROLL (set it up first)
+  const [step, setStep] = useState(s.passkey_step || 'NONE')
+  useEffect(() => setStep(s.passkey_step || 'NONE'), [s.passkey_step])
 
   const needsCode = !!s.verification_mode && s.verification_mode !== 'NONE'
   const needsLocation = s.verification_mode === 'CODE_LOCATION'
@@ -30,6 +34,10 @@ export default function ServiceCard({ service: s, onChange, autoCode = '' }) {
     setError('')
     try {
       const body = { occurrence_id: s.occurrence_id, device_time: new Date().toISOString() }
+      if (step === 'ASSERT') {
+        setStatus('Confirm with your fingerprint or face…')
+        body.passkey = await assertPasskey({ purpose: 'clock_in', occurrence_id: s.occurrence_id })
+      }
       if (needsCode) {
         body.code = codeValue
         body.device_token = getDeviceToken()
@@ -61,8 +69,22 @@ export default function ServiceCard({ service: s, onChange, autoCode = '' }) {
     }
   }
 
+  async function setUpPasskey() {
+    setBusy(true)
+    setError('')
+    try {
+      await enrollPasskey()
+      setStep('ASSERT')
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   useEffect(() => {
-    if (autoCode && s.state === 'open' && !autoRan.current) {
+    // a fingerprint prompt must start from a tap, so the QR link only fills the code in then
+    if (autoCode && s.state === 'open' && step !== 'ASSERT' && step !== 'ENROLL' && !autoRan.current) {
       autoRan.current = true
       clockIn(autoCode)
     }
@@ -82,19 +104,37 @@ export default function ServiceCard({ service: s, onChange, autoCode = '' }) {
         <span className={`badge ${s.state === 'upcoming' ? 'badge-outline' : `badge-${s.state}`}`}>{BADGE[s.state]}</span>
       </div>
 
-      {s.state === 'open' && !needsCode && (
-        <button className="btn btn-primary btn-big" onClick={() => clockIn()} disabled={busy}>
-          {busy ? 'Clocking in…' : 'Clock in'}
-        </button>
+      {s.state === 'open' && step === 'ENROLL' && (
+        <div>
+          <p className="small">
+            This service needs <strong>fingerprint or face check-in</strong>. Set it up on this phone first; it takes a few seconds.
+          </p>
+          {passkeysSupported() ? (
+            <button className="btn btn-primary btn-big" onClick={setUpPasskey} disabled={busy}>
+              {busy ? 'Waiting for your phone…' : 'Set up fingerprint or face'}
+            </button>
+          ) : (
+            <p className="muted small">This browser cannot do it. Try Chrome or Safari on your phone, or ask an usher to mark you present.</p>
+          )}
+        </div>
       )}
 
-      {s.state === 'open' && needsCode && !showCode && (
+      {s.state === 'open' && step !== 'ENROLL' && !needsCode && (
+        <>
+          <button className="btn btn-primary btn-big" onClick={() => clockIn()} disabled={busy}>
+            {busy ? status || 'Clocking in…' : 'Clock in'}
+          </button>
+          {step === 'ASSERT' && <p className="muted small">You will be asked for your fingerprint or face.</p>}
+        </>
+      )}
+
+      {s.state === 'open' && step !== 'ENROLL' && needsCode && !showCode && (
         <button className="btn btn-primary btn-big" onClick={() => setShowCode(true)}>
           Clock in
         </button>
       )}
 
-      {s.state === 'open' && needsCode && showCode && (
+      {s.state === 'open' && step !== 'ENROLL' && needsCode && showCode && (
         <form
           className="code-form"
           onSubmit={(e) => {
@@ -121,7 +161,7 @@ export default function ServiceCard({ service: s, onChange, autoCode = '' }) {
             {needsLocation && ' We will also ask for your location to confirm you are at the church.'}
           </p>
           <button className="btn btn-primary btn-big" disabled={busy}>
-            {busy ? status || 'Checking in…' : 'Check in'}
+            {busy ? status || 'Checking in…' : step === 'ASSERT' ? 'Verify with fingerprint and check in' : 'Check in'}
           </button>
         </form>
       )}

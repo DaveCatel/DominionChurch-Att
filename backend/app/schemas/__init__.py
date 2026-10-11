@@ -161,6 +161,7 @@ class ServiceCreate(BaseModel):
     department_ids: list[uuid.UUID] = Field(default_factory=list, max_length=50)
     # how clock-in is checked: NONE, CODE (the code on the screen at church), CODE_LOCATION
     verification_mode: Literal["NONE", "CODE", "CODE_LOCATION"] = "CODE_LOCATION"
+    passkey_mode: Literal["OFF", "IF_ENROLLED", "REQUIRED"] = "OFF"
 
     @model_validator(mode="after")
     def _check(self):
@@ -197,6 +198,7 @@ class ServiceUpdate(BaseModel):
     # replaces who may attend; an empty list opens the service to everyone
     department_ids: list[uuid.UUID] | None = Field(default=None, max_length=50)
     verification_mode: Literal["NONE", "CODE", "CODE_LOCATION"] | None = None
+    passkey_mode: Literal["OFF", "IF_ENROLLED", "REQUIRED"] | None = None
 
 
 class ServiceOut(BaseModel):
@@ -214,6 +216,7 @@ class ServiceOut(BaseModel):
     # filled in by the admin endpoints
     department_ids: list[uuid.UUID] = Field(default_factory=list)  # empty = open to everyone
     verification_mode: str = "NONE"
+    passkey_mode: str = "OFF"
     first_date: date | None = None  # one-off events: first and last day
     last_date: date | None = None
     attendance_count: int = 0  # clock-ins ever recorded; above 0 the service cannot be deleted
@@ -248,6 +251,8 @@ class ClockIn(BaseModel):
     longitude: float | None = Field(default=None, ge=-180, le=180)
     accuracy_m: float | None = Field(default=None, ge=0, le=1_000_000)
     device_token: str | None = Field(default=None, max_length=100)
+    # the fingerprint / face confirmation from the phone (see app/services/passkeys.py)
+    passkey: dict | None = None
 
 
 class ServiceCard(BaseModel):
@@ -265,6 +270,8 @@ class ServiceCard(BaseModel):
     clock_out: datetime | None
     # tells the app whether to ask for the check-in code and the location
     verification_mode: str = "NONE"
+    # NONE: nothing to do, ASSERT: confirm with fingerprint/face, ENROLL: set one up first
+    passkey_step: str = "NONE"
 
 
 class TodayOut(BaseModel):

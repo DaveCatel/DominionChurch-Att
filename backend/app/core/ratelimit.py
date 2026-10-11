@@ -74,11 +74,17 @@ class SlidingWindowLimiter:
 # Wrong passwords: 5 per sign-in name and address per 15 minutes. Only failures count,
 # so many people behind the church wifi can still sign in normally.
 login_failures = SlidingWindowLimiter(limit=5, window_seconds=15 * 60)
+# The same sign-in name from anywhere: 20 wrong passwords per hour. This still holds when an
+# attacker changes (or fakes) their address on every try.
+login_account_failures = SlidingWindowLimiter(limit=20, window_seconds=60 * 60)
 password_change_failures = SlidingWindowLimiter(limit=5, window_seconds=15 * 60)
 
 # Wrong check-in codes: 10 per member every 5 minutes (a code has only a million
 # possibilities, so guessing has to be slow).
 code_failures = SlidingWindowLimiter(limit=10, window_seconds=5 * 60)
+
+# Failed fingerprint/face confirmations at check-in: 10 per member every 5 minutes.
+passkey_failures = SlidingWindowLimiter(limit=10, window_seconds=5 * 60)
 
 # Generous because a whole congregation may share one address.
 signup_limiter = SlidingWindowLimiter(limit=30, window_seconds=60 * 60)

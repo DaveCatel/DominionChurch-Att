@@ -16,6 +16,7 @@ from app.models import (
     AttendanceRecord,
     AuthSession,
     Department,
+    Passkey,
     Role,
     ServiceOccurrence,
     User,
@@ -45,6 +46,7 @@ class MemberOut(BaseModel):
     departments: list[MemberDepartment]
     times_attended: int
     last_attended: date | None
+    passkey_count: int = 0  # phones set up for fingerprint / face check-in
 
 
 class MemberList(BaseModel):
@@ -92,7 +94,15 @@ def _members_out(db: Session, rows: list[tuple[User, str]]) -> list[MemberOut]:
     ids = [u.id for u, _ in rows]
     departments: dict[uuid.UUID, list[MemberDepartment]] = {}
     stats: dict[uuid.UUID, tuple[int, date | None]] = {}
+    passkeys: dict[uuid.UUID, int] = {}
     if ids:
+        passkeys = dict(
+            db.execute(
+                select(Passkey.user_id, func.count(Passkey.id))
+                .where(Passkey.user_id.in_(ids))
+                .group_by(Passkey.user_id)
+            ).all()
+        )
         for ud, dept in db.execute(
             select(UserDepartment, Department)
             .join(Department, Department.id == UserDepartment.department_id)
@@ -127,6 +137,7 @@ def _members_out(db: Session, rows: list[tuple[User, str]]) -> list[MemberOut]:
             departments=departments.get(u.id, []),
             times_attended=stats.get(u.id, (0, None))[0],
             last_attended=stats.get(u.id, (0, None))[1],
+            passkey_count=passkeys.get(u.id, 0),
         )
         for u, role_name in rows
     ]
@@ -350,3 +361,16 @@ def set_temporary_password(
     _revoke_sessions(db, user.id)
     db.commit()
     return Response(status_code=204)
+
+
+@router.delete("/{user_id}/passkeys", response_model=MemberOut)
+def reset_passkeys(
+    user_id: uuid.UUID, admin: User = Depends(require_admin), db: Session = Depends(get_db)
+):
+    """Remove all of a member's fingerprint / face check-in phones, for example after a lost
+    phone or when someone else set one up on their account. They can set a new one up."""
+    _get_member(db, admin, user_id)
+    for passkey in db.scalars(select(Passkey).where(Passkey.user_id == user_id)):
+        db.delete(passkey)
+    db.commit()
+    return _one(db, admin, user_id)

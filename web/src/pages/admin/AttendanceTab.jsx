@@ -8,21 +8,6 @@ const PRESETS = [
   ['1 year', 365],
 ]
 
-const csvCell = (value) => `"${String(value ?? '').replaceAll('\"', '\"\"')}"`
-
-function downloadCsv(filename, rows) {
-  if (!rows.length) return
-  const csv = rows.map((row) => row.map(csvCell).join(',')).join('\r\n')
-  const url = URL.createObjectURL(new Blob(['\ufeff', csv], { type: 'text/csv;charset=utf-8;' }))
-  const link = document.createElement('a')
-  link.href = url
-  link.download = filename
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
-  URL.revokeObjectURL(url)
-}
-
 const matches = (q, ...fields) => {
   const needle = q.trim().toLowerCase()
   return !needle || fields.some((f) => (f || '').toLowerCase().includes(needle))
@@ -44,6 +29,12 @@ function AttendeeTable({ rows, q, onRemove }) {
             <tr key={a.user_id}>
               <td>
                 {a.full_name}
+                {a.passkey_verified && (
+                  <>
+                    {' '}
+                    <span className="badge badge-open" title="Confirmed with fingerprint or face">fingerprint</span>
+                  </>
+                )}
                 {a.review_status === 'NEEDS_REVIEW' && (
                   <>
                     {' '}
@@ -249,46 +240,21 @@ export default function AttendanceTab() {
   }
 
   const members = report ? report.members.filter((m) => matches(q, m.full_name, m.phone, m.email)) : []
-  const sessionCount = sessions?.length || 0
-  const attendanceTotal = sessions?.reduce((sum, session) => sum + (Number(session.attendee_count) || 0), 0) || 0
-  const cancelledCount = sessions?.filter((session) => session.status === 'CANCELLED').length || 0
-  const uniqueMembers = report?.members?.length || 0
-
-  function exportCurrentView() {
-    if (mode === 'members' && report) {
-      downloadCsv(`attendance-members-${from}-to-${to}.csv`, [
-        ['Member name', 'Phone', 'Email', 'Times attended', 'Sessions in period', 'Last attended'],
-        ...members.map((member) => [member.full_name, member.phone, member.email, member.times_attended, report.sessions, member.last_attended]),
-      ])
-      return
-    }
-    if (mode === 'sessions' && sessions) {
-      downloadCsv(`attendance-sessions-${from}-to-${to}.csv`, [
-        ['Service', 'Date', 'Start time', 'Status', 'Attendees'],
-        ...sessions.map((session) => [session.name, session.service_date, session.start_time, session.status, session.attendee_count]),
-      ])
-    }
-  }
 
   return (
     <>
-      <section className="card attendance-filters-card">
-        <div className="attendance-filter-heading">
-          <div>
-            <p className="eyebrow">REPORTS & RECORDS</p>
-            <h2>Attendance overview</h2>
-            <p className="muted small">Choose a date range to review service attendance or compare attendance by member.</p>
-          </div>
-          <button className="btn btn-ghost" type="button" onClick={exportCurrentView} disabled={mode === 'sessions' ? !sessions?.length : !report || !members.length}>Export CSV</button>
-        </div>
+      <section className="card">
+        <h3>Find who attended</h3>
 
-        <label>
-          Service
-          <select value={serviceId} onChange={(e) => setServiceId(e.target.value)}>
-            <option value="">All services</option>
-            {services.map((service) => <option key={service.id} value={service.id}>{service.name}</option>)}
-          </select>
-        </label>
+        <p className="muted small filter-label">Service</p>
+        <div className="tabs wrap">
+          <button className={serviceId === '' ? 'active' : ''} onClick={() => setServiceId('')}>All services</button>
+          {services.map((s) => (
+            <button key={s.id} className={serviceId === s.id ? 'active' : ''} onClick={() => setServiceId(s.id)}>
+              {s.name}
+            </button>
+          ))}
+        </div>
 
         <div className="row">
           <label>
@@ -322,29 +288,14 @@ export default function AttendanceTab() {
         </div>
       </section>
 
-      {error && <p className="error" role="alert">{error}</p>}
-
-      {mode === 'sessions' && sessions && !error && (
-        <div className="attendance-stats-grid" aria-label="Attendance summary">
-          <article className="attendance-stat"><span>Sessions</span><strong>{sessionCount}</strong><small>in selected period</small></article>
-          <article className="attendance-stat"><span>Recorded attendance</span><strong>{attendanceTotal}</strong><small>attendance entries</small></article>
-          <article className="attendance-stat"><span>Cancelled</span><strong>{cancelledCount}</strong><small>sessions not held</small></article>
-        </div>
-      )}
-      {mode === 'members' && report && !error && (
-        <div className="attendance-stats-grid" aria-label="Member attendance summary">
-          <article className="attendance-stat"><span>Members attended</span><strong>{uniqueMembers}</strong><small>unique members</small></article>
-          <article className="attendance-stat"><span>Sessions</span><strong>{report.sessions}</strong><small>in selected period</small></article>
-          <article className="attendance-stat"><span>Matching members</span><strong>{members.length}</strong><small>after search filter</small></article>
-        </div>
-      )}
+      {error && <p className="error">{error}</p>}
 
       {mode === 'sessions' && (
         <>
           {!sessions && !error && <p className="muted">Loading…</p>}
           {sessions && sessions.length === 0 && <p className="card muted">No sessions in this period.</p>}
           {sessions && sessions.length > 0 && (
-            <ul className="card list sessions attendance-session-list">
+            <ul className="card list sessions">
               {sessions.map((o) => (
                 <li key={o.id} className="session">
                   <button className="session-head" onClick={() => toggle(o)} aria-expanded={!!open[o.id]}>
@@ -412,7 +363,7 @@ export default function AttendanceTab() {
                 {report.members.length} {report.members.length === 1 ? 'member' : 'members'} attended
                 {' '}across {report.sessions} {report.sessions === 1 ? 'session' : 'sessions'} in this period.
               </p>
-              <div className="card table-wrap attendance-member-table">
+              <div className="card table-wrap">
                 <table>
                   <thead>
                     <tr><th>Name</th><th>Phone</th><th>Attended</th><th>Last time</th></tr>

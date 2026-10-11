@@ -10,3 +10,5 @@ python-multipart
 pyjwt
 bcrypt
 tzdata
+cryptography>=42
+Pillow>=10

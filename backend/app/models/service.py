@@ -71,6 +71,15 @@ class ServiceTemplate(
         server_default="NONE",
     )
 
+    # fingerprint / face check at clock-in: OFF, IF_ENROLLED (needed only for members who
+    # have set one up) or REQUIRED (everyone must set one up first)
+    passkey_mode: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="OFF",
+        server_default="OFF",
+    )
+
     is_recurring: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,

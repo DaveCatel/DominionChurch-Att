@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.ratelimit import login_failures, signup_limiter
+from app.core.ratelimit import login_account_failures, login_failures, signup_limiter
 from app.core.security import (
     create_access_token,
     hash_password,
@@ -126,12 +126,15 @@ def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
     # at most 5 wrong passwords per sign-in name and address every 15 minutes
     attempt_key = f"{_client_ip(request)}|{ident.lower()}"
     login_failures.check(attempt_key)
+    login_account_failures.check(ident.lower())
     cond = User.email == ident.lower() if "@" in ident else User.phone == normalize_phone(ident)
     user = db.scalars(select(User).where(cond).limit(1)).first()
     if user is None or not verify_password(body.password, user.password_hash):
         login_failures.hit(attempt_key)
+        login_account_failures.hit(ident.lower())
         raise HTTPException(401, "Wrong email/phone or password")
     login_failures.reset(attempt_key)
+    login_account_failures.reset(ident.lower())
     if not user.is_active:
         raise HTTPException(403, "This account has been deactivated")
     return _issue_session(db, user, request)

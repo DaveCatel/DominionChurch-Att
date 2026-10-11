@@ -38,6 +38,7 @@ class AttendeeRow(AttendeeOut):
     # reasons the check-in looks doubtful (see app/services/checkin.py) and its review state
     flags: list[str] = []
     review_status: str = "OK"
+    passkey_verified: bool = False
 
 
 class OccurrenceStatusIn(BaseModel):
@@ -222,6 +223,7 @@ def create_service(
         default_end_time=body.end_time,
         is_recurring=body.is_recurring,
         verification_mode=body.verification_mode,
+        passkey_mode=body.passkey_mode,
         created_by=admin.id,
     )
     db.add(template)
@@ -250,7 +252,7 @@ def update_service(
 ):
     template = _owned_service(db, admin, service_id)
     data = body.model_dump(exclude_unset=True)
-    for field in ("name", "service_type", "start_time", "is_active", "verification_mode"):
+    for field in ("name", "service_type", "start_time", "is_active", "verification_mode", "passkey_mode"):
         if field in data and data[field] is None:
             raise HTTPException(422, f"{field} cannot be empty")
 
@@ -270,6 +272,8 @@ def update_service(
         template.is_active = data["is_active"]
     if "verification_mode" in data:
         template.verification_mode = data["verification_mode"]
+    if "passkey_mode" in data:
+        template.passkey_mode = data["passkey_mode"]
 
     # schedule
     if "day_of_week" in data:
@@ -342,6 +346,7 @@ def _attendee_row(record: AttendanceRecord, user: User) -> AttendeeRow:
         source=record.clock_in_source,
         flags=[f for f in (record.verification_flags or "").split(",") if f],
         review_status=record.review_status,
+        passkey_verified=record.passkey_verified,
     )
 
 
