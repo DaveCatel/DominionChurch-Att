@@ -12,39 +12,43 @@ export const BADGE = {
   missed: 'Missed',
 }
 
-// A service the member can clock in to. When the service checks presence, clocking in
-// asks for the code shown at church (and, for "code + location", where the phone is).
-// `autoCode` comes from scanning the QR code: it checks in straight away.
+// A service the member can clock in to. When the service checks presence, the member must be at
+// the church (their phone's location is checked) AND confirm with ONE of: the code shown on the
+// screen at church, or their phone's fingerprint / face. Which of those a member is offered
+// comes from the server (`checkin_methods`). `autoCode` comes from scanning the QR code on the
+// church screen: it checks in straight away with that code.
 export default function ServiceCard({ service: s, onChange, autoCode = '' }) {
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
-  const [showCode, setShowCode] = useState(!!autoCode)
+  const [codeOpen, setCodeOpen] = useState(!!autoCode)
   const [code, setCode] = useState(autoCode)
+  const [justSetUp, setJustSetUp] = useState(false) // fingerprint set up from this card a moment ago
   const autoRan = useRef(false)
-  // NONE | ASSERT (confirm with fingerprint/face) | ENROLL (set it up first)
-  const [step, setStep] = useState(s.passkey_step || 'NONE')
-  useEffect(() => setStep(s.passkey_step || 'NONE'), [s.passkey_step])
+  const [now, setNow] = useState(() => Date.now())
 
-  const needsCode = !!s.verification_mode && s.verification_mode !== 'NONE'
-  const needsLocation = s.verification_mode === 'CODE_LOCATION'
+  const verified = !!s.verification_mode && s.verification_mode !== 'NONE'
+  const methods = s.checkin_methods || []
+  const needsSetup = !!s.needs_passkey_setup && !justSetUp
+  const canPasskey = methods.includes('PASSKEY') || (justSetUp && !!s.needs_passkey_setup)
+  const canCode = methods.includes('CODE')
 
-  async function clockIn(codeValue) {
+  // method: 'PASSKEY' (fingerprint / face) or 'CODE'; the location is always collected first
+  async function clockIn(method, codeValue) {
     setBusy(true)
     setError('')
     try {
       const body = { occurrence_id: s.occurrence_id, device_time: new Date().toISOString() }
-      if (step === 'ASSERT') {
-        setStatus('Confirm with your fingerprint or face…')
-        body.passkey = await assertPasskey({ purpose: 'clock_in', occurrence_id: s.occurrence_id })
-      }
-      if (needsCode) {
-        body.code = codeValue
+      if (verified) {
         body.device_token = getDeviceToken()
-        if (needsLocation) {
-          setStatus('Checking your location…')
-          const where = await getLocation()
-          if (where) Object.assign(body, where)
+        setStatus('Checking your location…')
+        const where = await getLocation()
+        if (where) Object.assign(body, where)
+        if (method === 'PASSKEY') {
+          setStatus('Confirm with your fingerprint or face…')
+          body.passkey = await assertPasskey({ purpose: 'clock_in', occurrence_id: s.occurrence_id })
+        } else {
+          body.code = codeValue
         }
       }
       onChange(await api('/attendance/clock-in', { method: 'POST', body }))
@@ -56,16 +60,48 @@ export default function ServiceCard({ service: s, onChange, autoCode = '' }) {
     }
   }
 
+  // Clock-out is only possible once the service has ended (the server decides; this just
+  // keeps the button honest) and, for checked services, only at the church.
+  const outOpens = s.clock_out_opens_at ? new Date(s.clock_out_opens_at).getTime() : null
+  const outCloses = s.clock_out_closes_at ? new Date(s.clock_out_closes_at).getTime() : null
+  const outWaiting = outOpens !== null && now < outOpens
+  const outClosed = outCloses !== null && now > outCloses
+
+  useEffect(() => {
+    if (s.state !== 'clocked_in') return
+    const nextBoundary = [outOpens, outCloses]
+      .filter((boundary) => boundary !== null && boundary > now)
+      .sort((a, b) => a - b)[0]
+    if (nextBoundary === undefined) return
+    const wait = nextBoundary - Date.now()
+    if (wait <= 0) {
+      setNow(Date.now())
+      return
+    }
+    const t = setTimeout(() => setNow(Date.now()), Math.min(wait + 250, 60000))
+    return () => clearTimeout(t)
+  }, [s.state, outOpens, outCloses, now])
+
   async function clockOut() {
     setBusy(true)
     setError('')
     try {
       const body = { occurrence_id: s.occurrence_id, device_time: new Date().toISOString() }
+      if (verified) {
+        setStatus('Checking your location…')
+        const where = await getLocation()
+        if (where) Object.assign(body, where)
+      }
+      if (s.clock_out_passkey) {
+        setStatus('Confirm with your fingerprint or face…')
+        body.passkey = await assertPasskey({ purpose: 'clock_out', occurrence_id: s.occurrence_id })
+      }
       onChange(await api('/attendance/clock-out', { method: 'POST', body }))
     } catch (e) {
       setError(e.message)
     } finally {
       setBusy(false)
+      setStatus('')
     }
   }
 
@@ -74,7 +110,7 @@ export default function ServiceCard({ service: s, onChange, autoCode = '' }) {
     setError('')
     try {
       await enrollPasskey()
-      setStep('ASSERT')
+      setJustSetUp(true)
     } catch (e) {
       setError(e.message)
     } finally {
@@ -83,10 +119,10 @@ export default function ServiceCard({ service: s, onChange, autoCode = '' }) {
   }
 
   useEffect(() => {
-    // a fingerprint prompt must start from a tap, so the QR link only fills the code in then
-    if (autoCode && s.state === 'open' && step !== 'ASSERT' && step !== 'ENROLL' && !autoRan.current) {
+    // the QR code carries the code, so it checks in with that (and the phone's location)
+    if (autoCode && s.state === 'open' && verified && canCode && !autoRan.current) {
       autoRan.current = true
-      clockIn(autoCode)
+      clockIn('CODE', autoCode)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -104,7 +140,13 @@ export default function ServiceCard({ service: s, onChange, autoCode = '' }) {
         <span className={`badge ${s.state === 'upcoming' ? 'badge-outline' : `badge-${s.state}`}`}>{BADGE[s.state]}</span>
       </div>
 
-      {s.state === 'open' && step === 'ENROLL' && (
+      {s.state === 'open' && !verified && (
+        <button className="btn btn-primary btn-big" onClick={() => clockIn('NONE')} disabled={busy}>
+          {busy ? 'Clocking in…' : 'Clock in'}
+        </button>
+      )}
+
+      {s.state === 'open' && verified && needsSetup && (
         <div>
           <p className="small">
             This service needs <strong>fingerprint or face check-in</strong>. Set it up on this phone first; it takes a few seconds.
@@ -119,51 +161,58 @@ export default function ServiceCard({ service: s, onChange, autoCode = '' }) {
         </div>
       )}
 
-      {s.state === 'open' && step !== 'ENROLL' && !needsCode && (
+      {s.state === 'open' && verified && !needsSetup && (
         <>
-          <button className="btn btn-primary btn-big" onClick={() => clockIn()} disabled={busy}>
-            {busy ? status || 'Clocking in…' : 'Clock in'}
-          </button>
-          {step === 'ASSERT' && <p className="muted small">You will be asked for your fingerprint or face.</p>}
-        </>
-      )}
-
-      {s.state === 'open' && step !== 'ENROLL' && needsCode && !showCode && (
-        <button className="btn btn-primary btn-big" onClick={() => setShowCode(true)}>
-          Clock in
-        </button>
-      )}
-
-      {s.state === 'open' && step !== 'ENROLL' && needsCode && showCode && (
-        <form
-          className="code-form"
-          onSubmit={(e) => {
-            e.preventDefault()
-            clockIn(code)
-          }}
-        >
-          <label>
-            Check-in code
-            <input
-              className="code-input"
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              placeholder="6-digit code"
-              maxLength={7}
-              autoFocus
-              required
-            />
-          </label>
+          {canPasskey && (
+            <button className="btn btn-primary btn-big" onClick={() => clockIn('PASSKEY')} disabled={busy}>
+              {busy ? status || 'Checking in…' : 'Clock in with fingerprint or face'}
+            </button>
+          )}
+          {canPasskey && canCode && !codeOpen && (
+            <button className="btn btn-ghost" type="button" onClick={() => setCodeOpen(true)} disabled={busy}>
+              Use the check-in code instead
+            </button>
+          )}
+          {!canPasskey && canCode && !codeOpen && (
+            <button className="btn btn-primary btn-big" onClick={() => setCodeOpen(true)}>
+              Clock in
+            </button>
+          )}
+          {canCode && codeOpen && (
+            <form
+              className="code-form"
+              onSubmit={(e) => {
+                e.preventDefault()
+                clockIn('CODE', code)
+              }}
+            >
+              <label>
+                Check-in code
+                <input
+                  className="code-input"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  placeholder="6-digit code"
+                  maxLength={7}
+                  autoFocus
+                  required
+                />
+              </label>
+              <p className="muted small">
+                Type the code shown on the screen at church, or scan the QR code on that screen with your phone's camera.
+              </p>
+              <button className="btn btn-primary btn-big" disabled={busy}>
+                {busy ? status || 'Checking in…' : 'Check in'}
+              </button>
+            </form>
+          )}
           <p className="muted small">
-            Type the code shown on the screen at church, or scan the QR code on that screen with your phone's camera.
-            {needsLocation && ' We will also ask for your location to confirm you are at the church.'}
+            You need to be at the church to check in; we will ask for your location
+            {canPasskey ? ' and then your fingerprint or face' : ''}.
           </p>
-          <button className="btn btn-primary btn-big" disabled={busy}>
-            {busy ? status || 'Checking in…' : step === 'ASSERT' ? 'Verify with fingerprint and check in' : 'Check in'}
-          </button>
-        </form>
+        </>
       )}
 
       {s.state === 'clocked_in' && (
@@ -172,9 +221,26 @@ export default function ServiceCard({ service: s, onChange, autoCode = '' }) {
             <div className="time-box"><small>Check in</small><strong>{time(s.clock_in)}</strong></div>
             <div className="time-box pending"><small>Check out</small><strong>--:--</strong></div>
           </div>
-          <button className="btn btn-big" onClick={clockOut} disabled={busy}>
-            {busy ? 'Clocking out…' : 'Clock out'}
-          </button>
+          {outClosed ? (
+            <p className="muted small">Clock-out for this service has closed. Ask an admin if your time needs correcting.</p>
+          ) : outWaiting ? (
+            <>
+              <button className="btn btn-big" disabled>Clock-out opens at {time(s.clock_out_opens_at)}</button>
+              <p className="muted small">You can clock out when the service ends.</p>
+            </>
+          ) : (
+            <>
+              <button className="btn btn-big" onClick={clockOut} disabled={busy}>
+                {busy ? status || 'Clocking out…' : 'Clock out'}
+              </button>
+              {(verified || s.clock_out_passkey) && (
+                <p className="muted small">
+                  {verified && 'You need to be at the church to clock out. '}
+                  {s.clock_out_passkey && 'You will be asked for your fingerprint or face.'}
+                </p>
+              )}
+            </>
+          )}
         </>
       )}
       {s.state === 'completed' && (

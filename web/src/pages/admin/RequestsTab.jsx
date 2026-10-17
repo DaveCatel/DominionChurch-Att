@@ -142,7 +142,7 @@ export default function RequestsTab({ requests = [], onChange, loading = false, 
           </select>
         </label>
         {(query || department !== 'all' || sort !== 'newest') && (
-          <button type="button" className="btn btn-small join-request-clear" onClick={() => { setQuery(''); setDepartment('all'); setSort('newest') }}>
+          <button type="button" className="btn btn-sm join-request-clear" onClick={() => { setQuery(''); setDepartment('all'); setSort('newest') }}>
             Clear filters
           </button>
         )}

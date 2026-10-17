@@ -16,6 +16,7 @@ import math
 import re
 import time
 import uuid
+from datetime import datetime, timedelta, tzinfo
 
 from app.core.config import settings
 
@@ -91,3 +92,103 @@ def check_location(
     if dist - (accuracy_m or 0) > radius_m:
         flags.append(FLAG_FAR_FROM_VENUE)
     return flags, round(dist)
+
+
+# ---------- clock-out: only at the end of the service, and at the church ----------
+def clock_out_window(
+    end_time: datetime | None, opens_minutes_before: int, closes_minutes_after: int
+) -> tuple[datetime | None, datetime | None]:
+    """When clock-out is possible: from the end of the service (or a few minutes before, if
+    configured) until a few hours after it. A service with no end time has nothing to wait for,
+    so there is no restriction."""
+    if end_time is None:
+        return None, None
+    return end_time - timedelta(minutes=opens_minutes_before), end_time + timedelta(minutes=closes_minutes_after)
+
+
+def clock_out_time_error(
+    now: datetime, opens: datetime | None, closes: datetime | None, tz: tzinfo
+) -> str | None:
+    """A message for the member if clock-out is not possible right now, else None."""
+    if opens is not None and now < opens:
+        return f"You can clock out when the service ends, at {opens.astimezone(tz):%H:%M}."
+    if closes is not None and now > closes:
+        return "Clock-out for this service has closed. Ask an admin if your time needs correcting."
+    return None
+
+
+def location_error(
+    church_lat: float | None,
+    church_lng: float | None,
+    radius_m: int,
+    lat: float | None,
+    lng: float | None,
+    accuracy_m: float | None,
+    action: str,
+) -> tuple[str | None, int | None]:
+    """The phone must be at the church to check in or out, so this refuses instead of
+    flagging. `action` is the words for the message ("check in" or "clock out"). Returns
+    (message or None, distance in metres). If the admin has not set the church location there
+    is nothing to compare with, and nobody is refused."""
+    flags, distance = check_location(church_lat, church_lng, radius_m, lat, lng, accuracy_m)
+    if FLAG_NO_LOCATION in flags:
+        return "Allow location access so we can confirm you are at the church, then try again.", None
+    if FLAG_FAR_FROM_VENUE in flags:
+        return f"You need to be at the church to {action}. Your phone puts you about {distance} m away.", distance
+    if FLAG_LOW_ACCURACY in flags:
+        return (
+            "Your phone cannot tell where you are precisely enough. Move near a window or outside, wait a "
+            "few seconds and try again."
+        ), distance
+    return None, distance
+
+
+def clock_out_location_error(church_lat, church_lng, radius_m, lat, lng, accuracy_m):
+    return location_error(church_lat, church_lng, radius_m, lat, lng, accuracy_m, "clock out")
+
+
+# ---------- how a member confirms they are really there ----------
+# Location is always required (see location_error). On top of it the member confirms with ONE of:
+#   CODE     the 6-digit code shown on the screen at church
+#   PASSKEY  the fingerprint, face or screen lock of their own phone
+# and the service decides which are allowed (passkey_mode):
+#   OFF       code only
+#   OPTIONAL  either; a member who has not set a passkey up simply uses the code
+#   REQUIRED  fingerprint / face only (the code is not accepted)
+SETUP_MESSAGE = (
+    "This service needs fingerprint or face check-in. Set it up on your profile page first, "
+    "or ask an usher to mark you present."
+)
+
+
+def checkin_methods(passkey_mode: str, has_passkey: bool) -> list[str]:
+    """The ways this member can confirm at this service, best first."""
+    if passkey_mode == "REQUIRED":
+        return ["PASSKEY"] if has_passkey else []
+    if passkey_mode == "OPTIONAL" and has_passkey:
+        return ["PASSKEY", "CODE"]
+    return ["CODE"]
+
+
+def needs_passkey_setup(passkey_mode: str, has_passkey: bool) -> bool:
+    return passkey_mode == "REQUIRED" and not has_passkey
+
+
+def choose_factor(passkey_mode: str, has_passkey: bool, sent_passkey: bool) -> tuple[str | None, str | None, int]:
+    """Decide what the server must verify for this check-in: (factor, error message, HTTP status).
+    factor is "PASSKEY" or "CODE", or None when the request must be refused."""
+    if passkey_mode == "REQUIRED":
+        if not has_passkey:
+            return None, SETUP_MESSAGE, 403
+        if not sent_passkey:
+            return None, "Confirm with your fingerprint or face to check in.", 400
+        return "PASSKEY", None, 200
+    if passkey_mode == "OPTIONAL" and has_passkey and sent_passkey:
+        return "PASSKEY", None, 200
+    return "CODE", None, 200
+
+
+def clock_out_needs_passkey(passkey_mode: str, clocked_in_with_passkey: bool) -> bool:
+    """Whoever clocked in with their fingerprint must clock out with it too, so nobody else can
+    end their attendance for them; and fingerprint-only services always need it."""
+    return passkey_mode == "REQUIRED" or clocked_in_with_passkey

@@ -62,8 +62,8 @@ class ServiceTemplate(
         nullable=True,
     )
 
-    # NONE = anyone logged in can clock in, CODE = must enter the code shown at church,
-    # CODE_LOCATION = the code plus a check that the phone is at the church
+    # NONE = anyone logged in can clock in from anywhere. CODE_LOCATION = the phone must be at the
+    # church AND the member confirms with the code on the screen or their fingerprint (passkey_mode)
     verification_mode: Mapped[str] = mapped_column(
         String(20),
         nullable=False,
@@ -71,8 +71,8 @@ class ServiceTemplate(
         server_default="NONE",
     )
 
-    # fingerprint / face check at clock-in: OFF, IF_ENROLLED (needed only for members who
-    # have set one up) or REQUIRED (everyone must set one up first)
+    # how members confirm: OFF = the code only, OPTIONAL = the code or their fingerprint / face
+    # (their choice), REQUIRED = fingerprint / face only
     passkey_mode: Mapped[str] = mapped_column(
         String(20),
         nullable=False,

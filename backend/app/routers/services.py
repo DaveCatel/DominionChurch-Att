@@ -1,3 +1,4 @@
+import re
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from typing import Literal
@@ -17,6 +18,7 @@ from app.models import (
     ServiceParticipant,
     ServiceTemplate,
     User,
+    UserDepartment,
 )
 from app.schemas import (
     AttendeeOut,
@@ -27,6 +29,8 @@ from app.schemas import (
     ServiceOut,
     ServiceUpdate,
 )
+from app.services.attendance_pdf import PdfRow, build_attendance_pdf
+from app.services.downloads import LINK_SECONDS, make_download_token, read_download_token
 from app.services.scheduling import build_occurrence, church_tz, ensure_occurrences
 
 router = APIRouter(prefix="/services", tags=["services (admin)"])
@@ -600,3 +604,79 @@ def remove_attendance(
     db.delete(record)
     db.commit()
     return Response(status_code=204)
+
+
+# ---------- the printable attendance register (PDF) ----------
+PDF_KIND = "attendance-pdf"
+
+
+@router.post("/occurrences/{occurrence_id}/pdf-link")
+def attendance_pdf_link(
+    occurrence_id: uuid.UUID, admin: User = Depends(require_admin), db: Session = Depends(get_db)
+):
+    """A link to the PDF for this session. It works for two minutes, because a browser opens a
+    download directly and cannot send the usual sign-in header."""
+    _owned_occurrence(db, admin, occurrence_id)
+    token = make_download_token(PDF_KIND, occurrence_id, admin.id)
+    return {
+        "path": f"/api/services/occurrences/{occurrence_id}/attendance.pdf?token={token}",
+        "expires_in": LINK_SECONDS,
+    }
+
+
+@router.get("/occurrences/{occurrence_id}/attendance.pdf")
+def attendance_pdf(occurrence_id: uuid.UUID, token: str = Query(...), db: Session = Depends(get_db)):
+    """Church name, service, date and times, then everyone who attended with their phone,
+    department and clock in / clock out time."""
+    admin_id = read_download_token(token, PDF_KIND, occurrence_id)
+    admin = db.get(User, admin_id) if admin_id else None
+    if admin is None or not admin.is_active or admin.role.name != "admin":
+        raise HTTPException(403, "This download link is invalid or has expired. Please try again.")
+    occ, service_name = _owned_occurrence(db, admin, occurrence_id)
+    church = admin.church
+
+    records = db.execute(
+        select(AttendanceRecord, User)
+        .join(User, User.id == AttendanceRecord.user_id)
+        .where(AttendanceRecord.service_occurrence_id == occ.id)
+    ).all()
+    departments: dict[uuid.UUID, list[str]] = {}
+    ids = [u.id for _, u in records]
+    if ids:
+        for user_id, name in db.execute(
+            select(UserDepartment.user_id, Department.name)
+            .join(Department, Department.id == UserDepartment.department_id)
+            .where(
+                UserDepartment.user_id.in_(ids),
+                UserDepartment.status == "ACTIVE",
+                Department.is_active.is_(True),
+            )
+            .order_by(func.lower(Department.name))
+        ):
+            departments.setdefault(user_id, []).append(name)
+
+    pdf = build_attendance_pdf(
+        church_name=church.name,
+        service_name=service_name,
+        service_date=occ.service_date,
+        start=occ.start_time,
+        end=occ.end_time,
+        rows=[
+            PdfRow(
+                name=u.full_name,
+                phone=u.phone,
+                departments=", ".join(departments.get(u.id, [])),
+                clock_in=r.clock_in,
+                clock_out=r.clock_out,
+            )
+            for r, u in records
+        ],
+        tz=church_tz(church),
+        generated_at=datetime.now(timezone.utc),
+    )
+    slug = re.sub(r"[^A-Za-z0-9]+", "-", service_name).strip("-").lower() or "service"
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="attendance-{slug}-{occ.service_date.isoformat()}.pdf"'},
+    )

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../api'
 import { addDays, dayLabelYear, time, todayYMD } from '../../format'
+import { mediaUrl } from '../../lib/media'
 
 const PRESETS = [
   ['30 days', 30],
@@ -146,6 +147,7 @@ export default function AttendanceTab() {
   const [open, setOpen] = useState({}) // occurrence id -> expanded?
   const [details, setDetails] = useState({}) // occurrence id -> attendee rows
   const [error, setError] = useState('')
+  const [printing, setPrinting] = useState('') // session whose PDF is being prepared
 
   useEffect(() => {
     api('/services').then(setServices).catch((e) => setError(e.message))
@@ -227,6 +229,24 @@ export default function AttendanceTab() {
     }
   }
 
+  // The printable register for one session, as a PDF in a new tab (print or save it from there).
+  async function printPdf(o) {
+    setError('')
+    setPrinting(o.id)
+    const tab = window.open('', '_blank') // opened right away so phones do not block it
+    try {
+      const link = await api(`/services/occurrences/${o.id}/pdf-link`, { method: 'POST' })
+      const url = mediaUrl(link.path)
+      if (tab) tab.location.href = url
+      else window.location.assign(url)
+    } catch (e) {
+      if (tab) tab.close()
+      setError(e.message)
+    } finally {
+      setPrinting('')
+    }
+  }
+
   function toggle(o) {
     const isOpen = !!open[o.id]
     setOpen((cur) => ({ ...cur, [o.id]: !isOpen }))
@@ -245,6 +265,7 @@ export default function AttendanceTab() {
     <>
       <section className="card">
         <h3>Find who attended</h3>
+        <p className="muted small">Pick a service, then press <strong>Print PDF</strong> on a session to get its attendance register (church, service, date and times, and everyone who attended).</p>
 
         <p className="muted small filter-label">Service</p>
         <div className="tabs wrap">
@@ -298,6 +319,7 @@ export default function AttendanceTab() {
             <ul className="card list sessions">
               {sessions.map((o) => (
                 <li key={o.id} className="session">
+                  <div className="session-row">
                   <button className="session-head" onClick={() => toggle(o)} aria-expanded={!!open[o.id]}>
                     <span>
                       <strong>{o.name}</strong>
@@ -311,6 +333,17 @@ export default function AttendanceTab() {
                       </span>
                     )}
                   </button>
+                  {o.status !== 'CANCELLED' && (
+                    <button
+                      className="btn session-print"
+                      onClick={() => printPdf(o)}
+                      disabled={printing === o.id}
+                      title="Download or print this session's attendance register"
+                    >
+                      {printing === o.id ? 'Preparing…' : 'Print PDF'}
+                    </button>
+                  )}
+                  </div>
                   {open[o.id] && (
                     <div className="session-body">
                       {o.status === 'CANCELLED' ? (

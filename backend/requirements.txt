@@ -12,3 +12,4 @@ bcrypt
 tzdata
 cryptography>=42
 Pillow>=10
+reportlab>=4

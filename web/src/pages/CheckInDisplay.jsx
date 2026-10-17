@@ -44,7 +44,8 @@ export default function CheckInDisplay() {
   }, [load])
 
   const origin = window.location.origin
-  const link = info ? `${origin}/checkin?o=${occurrenceId}&code=${info.code}` : ''
+  const fingerprintOnly = info?.passkey_mode === 'REQUIRED' // the code is not accepted at this service
+  const link = info ? `${origin}/checkin?o=${occurrenceId}${fingerprintOnly ? '' : `&code=${info.code}`}` : ''
   const grouped = info ? `${info.code.slice(0, 3)} ${info.code.slice(3)}` : ''
 
   return (
@@ -71,23 +72,35 @@ export default function CheckInDisplay() {
             </p>
           ) : (
             <div className="kiosk-main">
-              <div className="kiosk-code">
-                <p className="kiosk-label">Check-in code</p>
-                <p className="kiosk-digits" aria-live="polite">{grouped}</p>
-                <div className="kiosk-timer" aria-hidden="true">
-                  <div style={{ width: `${Math.min(100, (left / info.window_seconds) * 100)}%` }} />
+              {!fingerprintOnly && (
+                <div className="kiosk-code">
+                  <p className="kiosk-label">Check-in code</p>
+                  <p className="kiosk-digits" aria-live="polite">{grouped}</p>
+                  <div className="kiosk-timer" aria-hidden="true">
+                    <div style={{ width: `${Math.min(100, (left / info.window_seconds) * 100)}%` }} />
+                  </div>
+                  <p className="kiosk-small">New code in {left}s</p>
                 </div>
-                <p className="kiosk-small">New code in {left}s</p>
-              </div>
+              )}
               <div className="kiosk-qr">
                 <QrCode value={link} size={320} label="Scan to check in" />
                 <p className="kiosk-small">Scan with your phone's camera</p>
               </div>
+              {fingerprintOnly && (
+                <div className="kiosk-code">
+                  <p className="kiosk-label">Check in with your fingerprint or face</p>
+                  <p className="kiosk-small">No code is needed at this service. You must be at the church.</p>
+                </div>
+              )}
             </div>
           )}
 
           <p className="kiosk-foot">
-            Open <strong>{origin.replace(/^https?:\/\//, '')}</strong>, tap Clock in and type the code, or scan the QR code.
+            {fingerprintOnly ? (
+              <>Scan the QR code or open <strong>{origin.replace(/^https?:\/\//, '')}</strong>, tap Clock in and confirm with your fingerprint or face.</>
+            ) : (
+              <>Open <strong>{origin.replace(/^https?:\/\//, '')}</strong>, tap Clock in and type the code (or use your fingerprint), or scan the QR code.</>
+            )}
             <span className="kiosk-count"> {info.attendee_count} checked in</span>
           </p>
         </>

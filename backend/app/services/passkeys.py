@@ -42,7 +42,7 @@ FLAG_UP = 0x01  # user present
 FLAG_UV = 0x04  # user verified (fingerprint, face or screen lock)
 FLAG_AT = 0x40  # attested credential data included
 
-PURPOSES = ("register", "manage", "clock_in")
+PURPOSES = ("register", "manage", "clock_in", "clock_out")
 
 
 class PasskeyError(Exception):

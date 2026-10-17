@@ -1,0 +1,16 @@
+Church attendance mobile UI update
+
+Apply this ZIP at the root of the existing project so the web/ and backend/ paths merge into their matching folders.
+
+Included changes:
+- Gives the app a soft page background so white cards and sections read as one consistent layout.
+- Groups profile details, security, departments, and attendance, with quick links to each section.
+- Gives department membership rows stable mobile layouts and full-width actions on phones.
+- Replaces wrapping member filter chips with compact labeled controls and separates admin member entries into clear cards.
+- Shows member avatars in the admin directory and places department badges below member details on narrow screens.
+- Adds the existing profile_photo_url value to the admin members API response.
+
+Deployment:
+1. Deploy the backend change to Render first; it adds profile_photo_url to /members responses.
+2. Deploy the frontend changes to Vercel.
+3. No database migration was added. The field already exists on the users table, so this update does not require a new Alembic revision. If your deploy command runs alembic upgrade head, it will find no new revision for this UI/API update.

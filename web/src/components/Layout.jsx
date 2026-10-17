@@ -21,10 +21,12 @@ export default function Layout({ children }) {
     <>
       <header className="topbar">
         <div className="topbar-inner">
+          <div className="brand">
             <div className="brand-mark">
-              <img src={churchLogo} alt='DC' />
+              <img src={churchLogo} alt="" />
             </div>
             <span>Attendance</span>
+          </div>
           <nav>
             <NavLink to="/" end><HomeIcon /><span>Home</span></NavLink>
             <NavLink to="/profile"><UserIcon /><span>Profile</span></NavLink>

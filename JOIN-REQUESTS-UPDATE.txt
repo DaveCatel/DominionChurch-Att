@@ -1,0 +1,5 @@
+Church attendance Join requests page update
+
+Apply this ZIP at the root of the existing project. It contains frontend files only and adds the reference layout to the admin Join requests page, including responsive behavior for phones.
+
+No backend, database, or Alembic changes are included. Deploy the web frontend to Vercel after applying the files.

@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     MEDIA_DIR: str = "media"
     # how long before a service starts that people may clock in
     CHECKIN_OPENS_MINUTES_BEFORE: int = 60
+    # Clock-out is only possible once the service has ended: it opens this many minutes before
+    # the end time (0 = exactly at the end) and closes this many minutes after it.
+    CHECKOUT_OPENS_MINUTES_BEFORE_END: int = 0
+    CHECKOUT_CLOSES_MINUTES_AFTER_END: int = 180
 
     # public address of the web app; used for the links inside emails
     WEB_BASE_URL: str = "http://localhost:5173"

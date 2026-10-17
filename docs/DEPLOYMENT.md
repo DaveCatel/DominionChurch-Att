@@ -222,34 +222,67 @@ attendance.yourchurch.org {
 Then: `sudo systemctl enable --now church-api caddy`. Open only ports 80 and 443 in the
 firewall; PostgreSQL (5432) and the API (8000) should not be reachable from outside.
 
-## 4a. Check-in verification (code, QR and location)
+## 4a. Check-in verification (location, then code or fingerprint)
 
-Each service can require the code shown on a screen at church, plus a location check
-(Admin > Services > Check-in verification).
+Each service has **Check-in verification** (Admin > Services). When it is **On**, a member can only
+check in (and clock out) from a phone that is at the church, and then confirms with ONE of:
+
+- the **code** shown on the screen at church (or its QR code), or
+- the **fingerprint, face or screen lock** of their own phone (see 4b).
+
+Which of those a service accepts is its "How members confirm" setting: *Code only*, *Code or
+fingerprint* (each member chooses; recommended) or *Fingerprint or face only* (no code).
+A phone that is not at the church is always refused, whichever way the member confirms.
 
 - **HTTPS is required in production.** Phones only share their location, and browsers only
-  allow the phone-id storage, on `https://` pages. On plain `http://` every check-in would be
-  flagged "did not share location".
-- **Set the church location once:** stand inside the church, open Admin > Check-in and press
-  "Use my current location", then Save. Keep the radius at 150-300 m; phones are less
-  accurate indoors.
-- **On the day:** Admin > Check-in > "Open check-in screen" on a projector or tablet. Use the
-  Full screen button. The code changes every 30 seconds and works for up to a minute.
+  allow the phone-id storage, on `https://` pages. On plain `http://` nobody could check in,
+  because every phone would be refused for not sharing a location.
+- **Set the church location first:** stand inside the church, open Admin > Check-in and press
+  "Use my current location", then Save. Until it is saved, the location check is skipped.
+  Keep the radius at 150-300 m; phones are less accurate indoors. A member whose phone gives a
+  position that is too rough to trust is asked to move near a window or outside and try again.
+- **On the day:** Admin > Check-in > "Open check-in screen" on a projector or tablet (or the
+  "Open check-in screen" link inside a session on the Attendance tab). Use the Full screen
+  button. The code changes every 30 seconds and works for up to a minute. For *Fingerprint or
+  face only* services the screen shows no code, only the QR code that opens the check-in.
 - **The code is derived from `SECRET_KEY`.** If you change that key, codes already shown
   stop working; just refresh the check-in screen.
-- **Check-ins that look doubtful** (far from the church, no location, a new phone) still go
-  through but appear under Admin > Check-in > Needs review, where you can approve or remove
-  them. A wrong or expired code is always refused.
+- **Check-ins that still get flagged** go through but appear under Admin > Check-in > Needs
+  review: a phone that was not identified, or a second phone for an account (unless the member
+  confirmed with their fingerprint). A wrong or expired code, or a phone away from the church,
+  is always refused.
+- **One phone can check in only one person per service.** Someone without a phone can be
+  marked present by an admin from the Attendance tab.
+- **Clock-out rules.** Members can only clock out once the service has ended, and only for
+  3 hours after that. For services with verification On they must also be at the church, and
+  whoever checked in with their fingerprint clocks out with it too. A service with **no end time**
+  has nothing to wait for, so members can clock out whenever they like: set an end time on every
+  service. Adjust with `CHECKOUT_OPENS_MINUTES_BEFORE_END` (default 0: exactly at the end) and
+  `CHECKOUT_CLOSES_MINUTES_AFTER_END` (default 180) in the backend settings.
 - The server must see each member's real address (the `--proxy-headers` option in section 4)
   for the address saved with each check-in to be meaningful.
+
+### Printing attendance (PDF)
+
+On the Attendance tab, pick a service (and a date range if you like) and press **Print PDF** on a
+session. A PDF opens in a new tab: the church name, the service, its date and start and end
+time, then everyone who attended in alphabetical order with phone, department(s) and clock in /
+clock out times. Print or save it from the PDF viewer.
+
+- The download link is signed and works for two minutes, for that one session and the admin who
+  asked. Pop-up blockers may need to allow the new tab.
+- It needs the `reportlab` package (`pip install -r requirements.txt`).
+- Names with French accents print correctly. Letters outside Western European text (for
+  example Cyrillic) are printed as "?".
 
 ## 4b. Fingerprint / face check-in (passkeys)
 
 Members can set up their phone's fingerprint, face or screen lock on their Profile page.
-A service can then require it (Admin > Services > Fingerprint or face check), which stops
-someone checking in as a friend even if they know the friend's password.
+A service can then accept it instead of the code, or require it (Admin > Services > How members
+confirm), which stops someone checking in as a friend even if they know the friend's password.
 
-- **Install the new dependency:** `pip install -r requirements.txt` (adds `cryptography`).
+- **Install the new dependencies:** `pip install -r requirements.txt` (adds `cryptography`,
+  `Pillow` for profile photos and `reportlab` for PDFs).
 - **The address must be right.** A passkey is tied to the website's domain. The app works
   out the domain from `WEB_BASE_URL`, so `WEB_BASE_URL` must be exactly the address people
   use, for example `https://attendance.yourchurch.org`. Passkeys need `https://`, except on
@@ -263,8 +296,11 @@ someone checking in as a friend even if they know the friend's password.
   (for example `cloudflared` or `ngrok`), set `WEB_BASE_URL` to the tunnel address, restart the
   backend, and open the tunnel address on the phone. Vite may need `server: { allowedHosts: true }`
   in `web/vite.config.js` to accept the tunnel's hostname.
-- **Rolling it out:** start services on "For members who set it up". Ask members to set it up
-  while they are at church (an usher can watch). When most have, switch to "Required".
+- **Rolling it out:** start services on "Code or fingerprint". Ask members to set it up while
+  they are at church (an usher can watch). A member who has not set it up simply uses the code.
+  The code stays available to everyone at that setting, so a friend at the church who knows a
+  password could still use it: when most members have set up fingerprint check-in, switch the
+  services where this matters to "Fingerprint or face only".
 - **Who can change a passkey:** a member can add a second phone only by confirming with the
   first one. They cannot remove one. An admin removes them from Admin > Members > "Reset
   passkeys" (lost phone, or if you suspect someone set one up on another person's account).

@@ -1,0 +1,5 @@
+Church attendance login branding update
+
+Apply this ZIP at the root of the existing project. It centers “BELIEVERS ROYAL FAMILY” beneath the church name and uses the muted text color.
+
+Frontend-only update; no backend or Alembic migration is required. Deploy the web frontend to Vercel.

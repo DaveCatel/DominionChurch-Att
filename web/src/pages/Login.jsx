@@ -31,9 +31,9 @@ export default function Login() {
             alt='DC'
             />
         </div>
-        <div>
-          <h1>DOMINION CHRURCH</h1>
-          <p className="brf">BELIEVERS ROYAL FAMILY</p>
+        <div className="auth-brand">
+          <h1>DOMINION CHURCH</h1>
+          <p className="brf muted">BELIEVERS ROYAL FAMILY</p>
         </div>
         <br />
         <h1>Welcome back</h1>

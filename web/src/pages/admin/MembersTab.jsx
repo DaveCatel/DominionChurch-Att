@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../../api'
 import { useAuth } from '../../auth.jsx'
 import { dateShort, dayLabelYear } from '../../format'
+import Avatar from '../../components/Avatar.jsx'
 
 const PAGE = 50
 
@@ -261,48 +262,39 @@ export default function MembersTab() {
 
   return (
     <>
-      <section className="card">
-        <h3>Members</h3>
-        <label>
+      <section className="card member-filter-card" aria-label="Filter members">
+        <label className="member-search-label">
           Search by name, phone or email
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="e.g. Marie or 6 77" />
         </label>
-
-        <p className="muted small filter-label">Show</p>
-        <div className="tabs wrap">
-          {[
-            ['all', 'Everyone'],
-            ['admin', 'Admins'],
-            ['inactive', 'Inactive'],
-          ].map(([key, label]) => (
-            <button key={key} className={filter === key ? 'active' : ''} onClick={() => setFilter(key)}>
-              {label}
-            </button>
-          ))}
+        <div className="member-filter-grid">
+          <label>
+            Show members
+            <select value={filter} onChange={(e) => setFilter(e.target.value)}>
+              <option value="all">Everyone</option>
+              <option value="admin">Admins</option>
+              <option value="inactive">Inactive</option>
+            </select>
+          </label>
+          {departments.length > 0 && (
+            <label>
+              Department
+              <select value={dept} onChange={(e) => setDept(e.target.value)}>
+                <option value="">All departments</option>
+                {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+              </select>
+            </label>
+          )}
         </div>
-
-        {departments.length > 0 && (
-          <>
-            <p className="muted small filter-label">Department</p>
-            <div className="tabs wrap">
-              <button className={dept === '' ? 'active' : ''} onClick={() => setDept('')}>All</button>
-              {departments.map((d) => (
-                <button key={d.id} className={dept === d.id ? 'active' : ''} onClick={() => setDept(d.id)}>
-                  {d.name}
-                </button>
-              ))}
-            </div>
-          </>
-        )}
       </section>
 
       {error && <p className="error">{error}</p>}
-      {!error && !loading && <p className="muted">{total} {total === 1 ? 'member' : 'members'}</p>}
+      {!error && !loading && <p className="muted member-results-count">{total} {total === 1 ? 'member' : 'members'}</p>}
       {loading && items.length === 0 && <p className="muted">Loading…</p>}
       {!loading && items.length === 0 && !error && <p className="card muted">No members match.</p>}
 
       {items.length > 0 && (
-        <ul className="card list sessions">
+        <ul className="list sessions member-list">
           {items.map((m) => (
             <li key={m.id} className="session">
               <button
@@ -310,24 +302,32 @@ export default function MembersTab() {
                 onClick={() => setOpenId(openId === m.id ? null : m.id)}
                 aria-expanded={openId === m.id}
               >
-                <span>
-                  <strong>{m.full_name}</strong>{' '}
-                  {m.role === 'admin' && <span className="badge">Admin</span>}{' '}
-                  {!m.is_active && <span className="badge badge-missed">Inactive</span>}{' '}
-                  {m.passkey_count > 0 && <span className="badge badge-open">Fingerprint</span>}
-                  <br />
-                  <span className="muted small">{[m.phone, m.email].filter(Boolean).join(' · ')}</span>
+                <span className="member-row-main">
+                  <Avatar user={m} size={44} decorative />
+                  <span className="member-row-copy">
+                    <span className="member-row-name">
+                      <strong>{m.full_name}</strong>
+                      {m.role === 'admin' && <span className="badge">Admin</span>}
+                      {!m.is_active && <span className="badge badge-missed">Inactive</span>}
+                      {m.passkey_count > 0 && <span className="badge badge-open">Fingerprint</span>}
+                    </span>
+                    <span className="muted small member-row-contact">
+                      {[m.phone, m.email].filter(Boolean).join(' · ')}
+                    </span>
+                  </span>
                 </span>
-                <span className="member-depts">
-                  {m.departments
-                    .filter((d) => d.status !== 'REJECTED')
-                    .map((d) => (
-                      <span key={d.department_id} className={`badge ${d.status === 'ACTIVE' ? 'badge-open' : ''}`}>
-                        {d.name}
-                        {d.status === 'PENDING' ? ' · waiting' : ''}
-                      </span>
-                    ))}
-                </span>
+                {m.departments.some((d) => d.status !== 'REJECTED') && (
+                  <span className="member-depts">
+                    {m.departments
+                      .filter((d) => d.status !== 'REJECTED')
+                      .map((d) => (
+                        <span key={d.department_id} className={`badge member-dept-badge ${d.status === 'ACTIVE' ? 'badge-open' : ''}`}>
+                          {d.name}
+                          {d.status === 'PENDING' ? ' · pending' : ''}
+                        </span>
+                      ))}
+                  </span>
+                )}
               </button>
               {openId === m.id && (
                 <MemberPanel member={m} departments={departments} isSelf={m.id === me?.id} onChange={replace} />
@@ -338,7 +338,7 @@ export default function MembersTab() {
       )}
 
       {items.length < total && (
-        <div className="actions">
+        <div className="actions member-load-more">
           <button className="btn" onClick={loadMore} disabled={loading}>
             {loading ? 'Loading…' : `Load more (${total - items.length} left)`}
           </button>

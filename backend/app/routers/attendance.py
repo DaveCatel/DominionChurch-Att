@@ -19,28 +19,26 @@ from app.models import (
     UserDepartment,
     UserDevice,
 )
+from app.core.config import settings
 from app.core.ratelimit import code_failures, passkey_failures
 from app.schemas import ClockIn, HistoryItem, ServiceCard, TodayOut
 from app.services.checkin import (
     FLAG_NEW_DEVICE,
     FLAG_NO_DEVICE_ID,
-    check_location,
+    SETUP_MESSAGE,
+    checkin_methods,
+    choose_factor,
+    clock_out_needs_passkey,
+    clock_out_time_error,
+    clock_out_window,
     code_is_valid,
+    location_error,
+    needs_passkey_setup,
 )
 from app.services.passkeys import PasskeyError, StoredPasskey, verify_assertion
 from app.services.scheduling import attendance_state, church_tz, ensure_occurrences, window
 
 router = APIRouter(prefix="/attendance", tags=["attendance"])
-
-
-def _passkey_step(template, has_passkey: bool) -> str:
-    """What the member still has to do about the fingerprint / face check for this service."""
-    mode = template.passkey_mode
-    if mode == "REQUIRED":
-        return "ASSERT" if has_passkey else "ENROLL"
-    if mode == "IF_ENROLLED" and has_passkey:
-        return "ASSERT"
-    return "NONE"
 
 
 def _has_passkey(db: Session, user: User) -> bool:
@@ -49,6 +47,10 @@ def _has_passkey(db: Session, user: User) -> bool:
 
 def _card(occ, template, record, now, tz, has_passkey: bool = False) -> ServiceCard:
     opens, _ = window(occ, tz)
+    verified = template.verification_mode != "NONE"  # the service checks where members are
+    out_opens, out_closes = clock_out_window(
+        occ.end_time, settings.CHECKOUT_OPENS_MINUTES_BEFORE_END, settings.CHECKOUT_CLOSES_MINUTES_AFTER_END
+    )
     return ServiceCard(
         occurrence_id=occ.id,
         name=template.name,
@@ -58,11 +60,16 @@ def _card(occ, template, record, now, tz, has_passkey: bool = False) -> ServiceC
         start_time=occ.start_time,
         end_time=occ.end_time,
         opens_at=opens,
+        clock_out_opens_at=out_opens,
+        clock_out_closes_at=out_closes,
         state=attendance_state(occ, record, now, tz),
         clock_in=record.clock_in if record else None,
         clock_out=record.clock_out if record else None,
         verification_mode=template.verification_mode,
-        passkey_step=_passkey_step(template, has_passkey),
+        checkin_methods=checkin_methods(template.passkey_mode, has_passkey) if verified else [],
+        needs_passkey_setup=verified and needs_passkey_setup(template.passkey_mode, has_passkey),
+        clock_out_passkey=verified
+        and clock_out_needs_passkey(template.passkey_mode, bool(record and record.passkey_verified)),
     )
 
 
@@ -197,34 +204,19 @@ def _require_valid_code(user: User, occurrence_id: uuid.UUID, code: str | None) 
         )
 
 
-def _verify_passkey(
-    db: Session, user: User, occ: ServiceOccurrence, template, payload: dict | None, now: datetime
-) -> bool:
-    """The fingerprint / face check. Returns True when it was done and passed.
-
-    IF_ENROLLED: members who set a passkey up must use it, others check in as before.
-    REQUIRED: everyone must have one. A friend who knows your password still cannot pass
-    this, because the check happens on your phone and needs your fingerprint or face."""
-    mode = template.passkey_mode
-    if mode == "OFF":
-        return False
+def _assert_passkey(
+    db: Session, user: User, occ: ServiceOccurrence, payload: dict, now: datetime, purpose: str
+) -> None:
+    """Check a fingerprint / face confirmation from the member's own phone. A friend who knows
+    your password cannot pass it: the check happens on your phone and needs your fingerprint."""
     passkeys = list(db.scalars(select(Passkey).where(Passkey.user_id == user.id)))
     if not passkeys:
-        if mode == "REQUIRED":
-            raise HTTPException(
-                403,
-                "This service needs fingerprint or face check-in. Set it up on your profile page "
-                "first, or ask an usher to mark you present.",
-            )
-        return False
-    if not payload:
-        raise HTTPException(400, "Confirm with your fingerprint or face to check in.")
-
+        raise HTTPException(400, "You have not set up fingerprint or face check-in yet.")
     key = str(user.id)
     passkey_failures.check(key)  # 429 after too many failures
     stored = {p.credential_id: StoredPasskey(p.public_key, p.alg, p.sign_count) for p in passkeys}
     try:
-        result = verify_assertion(payload, "clock_in", user.id, occ.id, stored)
+        result = verify_assertion(payload, purpose, user.id, occ.id, stored)
     except PasskeyError as exc:
         passkey_failures.hit(key)
         raise HTTPException(400, str(exc))
@@ -232,7 +224,6 @@ def _verify_passkey(
         if p.credential_id == result.credential_id:
             p.sign_count = result.sign_count
             p.last_used_at = now
-    return True
 
 
 def _identify_device(
@@ -317,24 +308,39 @@ def clock_in(
     flags: list[str] = []
     device = None
     distance = None
-    if mode in ("CODE", "CODE_LOCATION"):
-        _require_valid_code(user, occ.id, body.code)
-    passkey_ok = _verify_passkey(db, user, occ, template, body.passkey, now)
-    if mode in ("CODE", "CODE_LOCATION"):
-        device, device_flags = _identify_device(db, user, occ, body.device_token, request, now)
-        # a fingerprint/face check already proved who this is, so a new phone is not suspicious
-        flags += [f for f in device_flags if not (passkey_ok and f == FLAG_NEW_DEVICE)]
-    if mode == "CODE_LOCATION":
+    passkey_ok = False
+    if mode != "NONE":
+        # 1. the phone must be at the church (refused, not just flagged)
         church = user.church
-        location_flags, distance = check_location(
+        problem, distance = location_error(
             church.latitude,
             church.longitude,
             church.geofence_radius_m,
             body.latitude,
             body.longitude,
             body.accuracy_m,
+            "check in",
         )
-        flags += location_flags
+        if problem:
+            raise HTTPException(400, problem)
+
+        # 2. plus ONE confirmation: the code on the screen, or fingerprint / face,
+        #    as far as this service and this member allow
+        factor, problem, status_code = choose_factor(
+            template.passkey_mode, _has_passkey(db, user), bool(body.passkey)
+        )
+        if problem:
+            raise HTTPException(status_code, problem)
+        if factor == "PASSKEY":
+            _assert_passkey(db, user, occ, body.passkey, now, "clock_in")
+            passkey_ok = True
+        else:
+            _require_valid_code(user, occ.id, body.code)
+
+        # 3. which phone it came from (one phone cannot check in two people)
+        device, device_flags = _identify_device(db, user, occ, body.device_token, request, now)
+        # a fingerprint/face check already proved who this is, so a new phone is not suspicious
+        flags += [f for f in device_flags if not (passkey_ok and f == FLAG_NEW_DEVICE)]
 
     record = AttendanceRecord(
         user_id=user.id,
@@ -345,10 +351,10 @@ def clock_in(
         clock_in_device_time=body.device_time,
         clock_in_source="ONLINE",
         sync_status="SYNCED",
-        # a location is only kept when the service asked for one
-        latitude=body.latitude if mode == "CODE_LOCATION" else None,
-        longitude=body.longitude if mode == "CODE_LOCATION" else None,
-        accuracy_m=body.accuracy_m if mode == "CODE_LOCATION" else None,
+        # a location is only kept when the service checks it
+        latitude=body.latitude if mode != "NONE" else None,
+        longitude=body.longitude if mode != "NONE" else None,
+        accuracy_m=body.accuracy_m if mode != "NONE" else None,
         distance_m=distance,
         ip_address=_client_ip(request) if mode != "NONE" else None,
         passkey_verified=passkey_ok,
@@ -377,6 +383,42 @@ def clock_out(body: ClockIn, user: User = Depends(get_current_user), db: Session
     if record.clock_out is not None:
         raise HTTPException(409, "You have already clocked out")
 
+    # Clocking out proves you stayed, so it is only possible once the service has ended...
+    opens, closes = clock_out_window(
+        occ.end_time, settings.CHECKOUT_OPENS_MINUTES_BEFORE_END, settings.CHECKOUT_CLOSES_MINUTES_AFTER_END
+    )
+    problem = clock_out_time_error(now, opens, closes, tz)
+    if problem:
+        raise HTTPException(400, problem)
+
+    # ...and only at the church...
+    distance = None
+    if template.verification_mode != "NONE":
+        church = user.church
+        problem, distance = location_error(
+            church.latitude,
+            church.longitude,
+            church.geofence_radius_m,
+            body.latitude,
+            body.longitude,
+            body.accuracy_m,
+            "clock out",
+        )
+        if problem:
+            raise HTTPException(400, problem)
+
+        # ...and by the member themselves: whoever clocked in with their fingerprint clocks out
+        # with it too, so nobody else can end their attendance for them.
+        if clock_out_needs_passkey(template.passkey_mode, record.passkey_verified):
+            if not _has_passkey(db, user):
+                if template.passkey_mode == "REQUIRED":
+                    raise HTTPException(403, SETUP_MESSAGE)
+            elif not body.passkey:
+                raise HTTPException(400, "Confirm with your fingerprint or face to clock out.")
+            else:
+                _assert_passkey(db, user, occ, body.passkey, now, "clock_out")
+        record.clock_out_distance_m = distance
+        record.clock_out_accuracy_m = body.accuracy_m
     record.clock_out = now
     record.clock_out_server_time = now
     record.clock_out_device_time = body.device_time

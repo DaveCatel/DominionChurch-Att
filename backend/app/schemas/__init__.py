@@ -159,9 +159,11 @@ class ServiceCreate(BaseModel):
     end_date: date | None = None
     # empty = open to everyone; otherwise only active members of these departments
     department_ids: list[uuid.UUID] = Field(default_factory=list, max_length=50)
-    # how clock-in is checked: NONE, CODE (the code on the screen at church), CODE_LOCATION
-    verification_mode: Literal["NONE", "CODE", "CODE_LOCATION"] = "CODE_LOCATION"
-    passkey_mode: Literal["OFF", "IF_ENROLLED", "REQUIRED"] = "OFF"
+    # NONE: anyone signed in can clock in from anywhere. CODE_LOCATION: the phone must be at the church
+    # AND the member confirms with the code on the screen or (see passkey_mode) their fingerprint.
+    verification_mode: Literal["NONE", "CODE_LOCATION"] = "CODE_LOCATION"
+    # how members confirm: OFF = code only, OPTIONAL = code or fingerprint, REQUIRED = fingerprint only
+    passkey_mode: Literal["OFF", "OPTIONAL", "REQUIRED"] = "OPTIONAL"
 
     @model_validator(mode="after")
     def _check(self):
@@ -197,8 +199,8 @@ class ServiceUpdate(BaseModel):
     end_date: date | None = None
     # replaces who may attend; an empty list opens the service to everyone
     department_ids: list[uuid.UUID] | None = Field(default=None, max_length=50)
-    verification_mode: Literal["NONE", "CODE", "CODE_LOCATION"] | None = None
-    passkey_mode: Literal["OFF", "IF_ENROLLED", "REQUIRED"] | None = None
+    verification_mode: Literal["NONE", "CODE_LOCATION"] | None = None
+    passkey_mode: Literal["OFF", "OPTIONAL", "REQUIRED"] | None = None
 
 
 class ServiceOut(BaseModel):
@@ -268,10 +270,15 @@ class ServiceCard(BaseModel):
     state: str
     clock_in: datetime | None
     clock_out: datetime | None
+    # when clock-out is possible (None = no restriction: the service has no end time)
+    clock_out_opens_at: datetime | None = None
+    clock_out_closes_at: datetime | None = None
     # tells the app whether to ask for the check-in code and the location
     verification_mode: str = "NONE"
-    # NONE: nothing to do, ASSERT: confirm with fingerprint/face, ENROLL: set one up first
-    passkey_step: str = "NONE"
+    # how this member can confirm at this service: "CODE" and/or "PASSKEY" (fingerprint / face)
+    checkin_methods: list[str] = Field(default_factory=list)
+    needs_passkey_setup: bool = False  # fingerprint-only service and the member has not set one up
+    clock_out_passkey: bool = False  # clock-out will ask for the fingerprint / face
 
 
 class TodayOut(BaseModel):

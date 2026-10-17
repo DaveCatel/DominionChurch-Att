@@ -15,19 +15,19 @@ const EMPTY = {
   end_date: '',
   department_ids: [],
   verification_mode: 'CODE_LOCATION',
-  passkey_mode: 'OFF',
+  passkey_mode: 'OPTIONAL',
 }
 
 const VERIFY = {
-  NONE: 'Check-in: off',
-  CODE: 'Check-in: code',
-  CODE_LOCATION: 'Check-in: code + location',
+  NONE: 'Check-in: no checks',
+  CODE_LOCATION: 'Check-in: at the church',
 }
 
+// how a member confirms, once the location is checked
 const PASSKEY = {
-  OFF: '',
-  IF_ENROLLED: ' · Fingerprint: if set up',
-  REQUIRED: ' · Fingerprint: required',
+  OFF: ' + code',
+  OPTIONAL: ' + code or fingerprint',
+  REQUIRED: ' + fingerprint only',
 }
 
 const hhmm = (t) => (t ? t.slice(0, 5) : '')
@@ -44,7 +44,7 @@ const fromService = (s) => ({
   start_date: s.first_date || '',
   end_date: s.last_date || '',
   department_ids: s.department_ids || [],
-  verification_mode: s.verification_mode || 'NONE',
+  verification_mode: s.verification_mode && s.verification_mode !== 'NONE' ? 'CODE_LOCATION' : 'NONE',
   passkey_mode: s.passkey_mode || 'OFF',
 })
 
@@ -209,6 +209,10 @@ export function ServiceForm({ service, departments, locationSet, onSaved, onCanc
           <input type="time" value={f.end_time} onChange={set('end_time')} />
         </label>
       </div>
+      <p className="muted small">
+        Members can only clock out once the service has ended
+        {f.end_time ? ` (${f.end_time})` : ', so set an end time to turn this on. Without one they can clock out whenever they like'}.
+      </p>
       <fieldset className="who">
         <legend>Who can attend</legend>
         <label className="check-item">
@@ -240,8 +244,7 @@ export function ServiceForm({ service, departments, locationSet, onSaved, onCanc
       <fieldset className="who">
         <legend>Check-in verification</legend>
         {[
-          ['CODE_LOCATION', 'Code + location (recommended)', 'Members type the code shown at church, and their phone must be at the church.'],
-          ['CODE', 'Code only', 'Members type the code shown on the screen at church.'],
+          ['CODE_LOCATION', 'On (recommended)', 'Members must be at the church to check in or clock out; their phone\'s location is checked.'],
           ['NONE', 'Off', 'Anyone signed in can clock in from anywhere.'],
         ].map(([value, title, help]) => (
           <label className="check-item" key={value}>
@@ -259,32 +262,36 @@ export function ServiceForm({ service, departments, locationSet, onSaved, onCanc
         ))}
         {f.verification_mode === 'CODE_LOCATION' && !locationSet && (
           <p className="muted small">
-            The church location is not set yet, so the location part is skipped. Set it in the Check-in tab.
+            The church location is not set yet, so the location check is skipped. Set it in the Check-in tab.
           </p>
         )}
       </fieldset>
-      <fieldset className="who">
-        <legend>Fingerprint or face check</legend>
-        {[
-          ['OFF', 'Off', 'No fingerprint or face check.'],
-          ['IF_ENROLLED', 'For members who set it up', 'Best while you roll it out: members who have set it up must use it, others check in as before.'],
-          ['REQUIRED', 'Required', 'Everyone must set it up on their profile first. Anyone without it can be marked present by an admin.'],
-        ].map(([value, title, help]) => (
-          <label className="check-item" key={value}>
-            <input
-              type="radio"
-              name={`passkey-${service?.id || 'new'}`}
-              checked={f.passkey_mode === value}
-              onChange={() => setF({ ...f, passkey_mode: value })}
-            />
-            <span>
-              {title}
-              <span className="muted small"> · {help}</span>
-            </span>
-          </label>
-        ))}
-        <p className="muted small">It stops someone checking in as a friend, because only the real phone unlocked by its owner can confirm.</p>
-      </fieldset>
+      {f.verification_mode === 'CODE_LOCATION' && (
+        <fieldset className="who">
+          <legend>How members confirm (after the location)</legend>
+          {[
+            ['OPTIONAL', 'Code or fingerprint (recommended)', "Each member chooses: the code from the screen at church, or their phone's fingerprint or face."],
+            ['OFF', 'Code only', 'Members type the code shown on the screen at church.'],
+            ['REQUIRED', 'Fingerprint or face only', 'No code. Everyone must set up fingerprint check-in on their profile first; an admin can mark anyone without it present.'],
+          ].map(([value, title, help]) => (
+            <label className="check-item" key={value}>
+              <input
+                type="radio"
+                name={`passkey-${service?.id || 'new'}`}
+                checked={f.passkey_mode === value}
+                onChange={() => setF({ ...f, passkey_mode: value })}
+              />
+              <span>
+                {title}
+                <span className="muted small"> · {help}</span>
+              </span>
+            </label>
+          ))}
+          {f.passkey_mode === 'OPTIONAL' && (
+            <p className="muted small">Fingerprint is the stronger check, because a friend cannot use it for you. Choose "Fingerprint or face only" for services where that matters most.</p>
+          )}
+        </fieldset>
+      )}
       {editing && (
         <p className="muted small">
           Changes to the day or time apply to upcoming sessions nobody has clocked in to yet. Past
@@ -426,7 +433,7 @@ export default function ServicesTab() {
                   <div><span className="service-meta-label">Type</span><strong>{({ SERVICE: 'Service', MEETING: 'Meeting', EVENT: 'Event' })[s.service_type] || s.service_type}</strong></div>
                   <div><span className="service-meta-label">Attendance access</span><strong>{who(s)}</strong></div>
                 </div>
-                <p className="service-verification">{VERIFY[s.verification_mode] || 'Check-in: off'}{PASSKEY[s.passkey_mode] || ''}</p>
+                <p className="service-verification">{VERIFY[s.verification_mode === 'NONE' ? 'NONE' : 'CODE_LOCATION']}{s.verification_mode === 'NONE' ? '' : PASSKEY[s.passkey_mode] || PASSKEY.OFF}</p>
               </div>
               <div className="service-management-actions">
                 <button className="btn btn-primary" onClick={() => navigate(`/admin/services/${s.id}/edit`)}>Edit service</button>

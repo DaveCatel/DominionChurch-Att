@@ -37,6 +37,7 @@ class MemberDepartment(BaseModel):
 class MemberOut(BaseModel):
     id: uuid.UUID
     full_name: str
+    profile_photo_url: str | None
     email: str | None
     phone: str | None
     role: str
@@ -128,6 +129,7 @@ def _members_out(db: Session, rows: list[tuple[User, str]]) -> list[MemberOut]:
         MemberOut(
             id=u.id,
             full_name=u.full_name,
+            profile_photo_url=u.profile_photo_url,
             email=u.email,
             phone=u.phone,
             role=role_name,

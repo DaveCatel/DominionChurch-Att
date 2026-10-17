@@ -98,6 +98,10 @@ class AttendanceRecord(
     # comma separated reasons an admin should look at this record, for example
     # "FAR_FROM_VENUE,NEW_DEVICE"; review_status is OK, NEEDS_REVIEW or APPROVED
     verification_flags: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # how far from the church the phone was when the member clocked out
+    clock_out_distance_m: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    clock_out_accuracy_m: Mapped[float | None] = mapped_column(Float, nullable=True)
+
     # true when the member confirmed this check-in with their fingerprint / face
     passkey_verified: Mapped[bool] = mapped_column(
         Boolean,

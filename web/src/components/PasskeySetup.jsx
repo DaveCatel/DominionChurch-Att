@@ -24,7 +24,7 @@ export default function PasskeySetup() {
       // a second phone has to be approved by the first one
       const assertion = list && list.length > 0 ? await assertPasskey({ purpose: 'manage' }) : null
       await enrollPasskey({ assertion })
-      setMessage('Done. This phone will now ask for your fingerprint or face when you check in.')
+      setMessage('Phone set up.')
       await load()
     } catch (err) {
       setError(err.message)
@@ -38,12 +38,8 @@ export default function PasskeySetup() {
   return (
     <section className="card">
       <h3>Fingerprint or face check-in</h3>
-      <p className="muted small">
-        Confirm your check-ins with your phone's fingerprint, face or screen lock, so nobody else can check in as you, even if
-        they know your password.
-      </p>
 
-      {!supported && <p className="muted small">This browser cannot do fingerprint or face check-in. Try Chrome or Safari on your phone.</p>}
+      {!supported && <p className="muted small">Passkey setup isn’t available in this browser.</p>}
 
       {has && (
         <ul className="list">
@@ -69,7 +65,6 @@ export default function PasskeySetup() {
       )}
       {error && <p className="error">{error}</p>}
       {message && <p className="muted small">{message}</p>}
-      {has && <p className="muted small">To remove a phone, for example if you lost it, ask a church admin.</p>}
     </section>
   )
 }

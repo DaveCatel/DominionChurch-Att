@@ -29,6 +29,7 @@ class CodeOut(BaseModel):
     service_date: date
     start_time: datetime
     verification_mode: str
+    passkey_mode: str  # REQUIRED = fingerprint only: the code is not accepted
     attendee_count: int
 
 
@@ -102,6 +103,7 @@ def live_code(
         service_date=occ.service_date,
         start_time=occ.start_time,
         verification_mode=template.verification_mode,
+        passkey_mode=template.passkey_mode,
         attendee_count=attendees,
     )
 

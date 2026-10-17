@@ -45,7 +45,7 @@ class RegisterVerifyIn(BaseModel):
 
 
 class AuthOptionsIn(BaseModel):
-    purpose: Literal["clock_in", "manage"]
+    purpose: Literal["clock_in", "clock_out", "manage"]
     occurrence_id: uuid.UUID | None = None
 
 
@@ -76,7 +76,7 @@ def auth_options(
     passkeys = _mine(db, user)
     if not passkeys:
         raise HTTPException(400, "You have not set up fingerprint or face check-in yet.")
-    if body.purpose == "clock_in":
+    if body.purpose in ("clock_in", "clock_out"):
         if body.occurrence_id is None:
             raise HTTPException(422, "Say which service you are checking in to")
         found = db.scalar(
@@ -89,7 +89,7 @@ def auth_options(
         )
         if found is None:
             raise HTTPException(404, "Service not found")
-    occurrence_id = body.occurrence_id if body.purpose == "clock_in" else None
+    occurrence_id = body.occurrence_id if body.purpose != "manage" else None
     return authentication_options(user.id, [p.credential_id for p in passkeys], body.purpose, occurrence_id)
 
 
