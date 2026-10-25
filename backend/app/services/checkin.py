@@ -26,6 +26,7 @@ WINDOW_SECONDS = 30
 FLAG_NO_LOCATION = "NO_LOCATION"  # the member did not share a location
 FLAG_LOW_ACCURACY = "LOW_ACCURACY"  # the phone could only guess roughly where it is
 FLAG_FAR_FROM_VENUE = "FAR_FROM_VENUE"  # clearly outside the church area
+FLAG_GEOFENCE_UNCERTAIN = "GEOFENCE_UNCERTAIN"  # estimated point is outside; uncertainty overlaps
 FLAG_NEW_DEVICE = "NEW_DEVICE"  # first time this account is used from this phone
 FLAG_NO_DEVICE_ID = "NO_DEVICE_ID"  # the browser did not identify the phone
 
@@ -88,9 +89,13 @@ def check_location(
     dist = distance_m(church_lat, church_lng, lat, lng)
     if accuracy_m is not None and accuracy_m > max(500, 2 * radius_m):
         flags.append(FLAG_LOW_ACCURACY)
-    # "clearly outside": even if the phone is as close as its own error margin allows
-    if dist - (accuracy_m or 0) > radius_m:
+    # Reject only when the point remains outside after accounting for its error margin.
+    accuracy = accuracy_m or 0
+    if dist - accuracy > radius_m:
         flags.append(FLAG_FAR_FROM_VENUE)
+    # The reported point misses the geofence, but the uncertainty circle still reaches it.
+    elif dist > radius_m:
+        flags.append(FLAG_GEOFENCE_UNCERTAIN)
     return flags, round(dist)
 
 
@@ -132,7 +137,10 @@ def location_error(
     is nothing to compare with, and nobody is refused."""
     flags, distance = check_location(church_lat, church_lng, radius_m, lat, lng, accuracy_m)
     if FLAG_NO_LOCATION in flags:
-        return "Allow location access so we can confirm you are at the church, then try again.", None
+        return (
+            "Your device did not send location coordinates. Allow location access for this app or browser, "
+            "then try again."
+        ), None
     if FLAG_FAR_FROM_VENUE in flags:
         return f"You need to be at the church to {action}. Your phone puts you about {distance} m away.", distance
     if FLAG_LOW_ACCURACY in flags:

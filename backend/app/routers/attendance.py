@@ -23,9 +23,14 @@ from app.core.config import settings
 from app.core.ratelimit import code_failures, passkey_failures
 from app.schemas import ClockIn, HistoryItem, ServiceCard, TodayOut
 from app.services.checkin import (
+    FLAG_FAR_FROM_VENUE,
+    FLAG_GEOFENCE_UNCERTAIN,
+    FLAG_LOW_ACCURACY,
     FLAG_NEW_DEVICE,
     FLAG_NO_DEVICE_ID,
+    FLAG_NO_LOCATION,
     SETUP_MESSAGE,
+    check_location,
     checkin_methods,
     choose_factor,
     clock_out_needs_passkey,
@@ -310,19 +315,34 @@ def clock_in(
     distance = None
     passkey_ok = False
     if mode != "NONE":
-        # 1. the phone must be at the church (refused, not just flagged)
+        # 1. Reject missing or clearly out-of-range locations. Uncertain readings
+        #    that could still be inside are accepted and sent to admin review.
         church = user.church
-        problem, distance = location_error(
+        location_flags, distance = check_location(
             church.latitude,
             church.longitude,
             church.geofence_radius_m,
             body.latitude,
             body.longitude,
             body.accuracy_m,
-            "check in",
         )
-        if problem:
-            raise HTTPException(400, problem)
+        if FLAG_NO_LOCATION in location_flags or FLAG_FAR_FROM_VENUE in location_flags:
+            problem, distance = location_error(
+                church.latitude,
+                church.longitude,
+                church.geofence_radius_m,
+                body.latitude,
+                body.longitude,
+                body.accuracy_m,
+                "check in",
+            )
+            if problem:
+                raise HTTPException(400, problem)
+        flags.extend(
+            flag
+            for flag in location_flags
+            if flag in (FLAG_LOW_ACCURACY, FLAG_GEOFENCE_UNCERTAIN)
+        )
 
         # 2. plus ONE confirmation: the code on the screen, or fingerprint / face,
         #    as far as this service and this member allow

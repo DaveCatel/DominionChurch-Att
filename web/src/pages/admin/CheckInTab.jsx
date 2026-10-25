@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../../api'
 import { dayLabelYear, time, todayYMD } from '../../format'
+import { getLocation } from '../../lib/device'
 
 const FLAG_LABEL = {
   NO_LOCATION: 'Did not share location',
@@ -27,22 +28,20 @@ function ChurchLocation() {
       .catch((e) => setError(e.message))
   }, [])
 
-  function useMyLocation() {
+  async function useMyLocation() {
     setError('')
     setMessage('')
-    if (!navigator.geolocation) return setError('This browser cannot find your location.')
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setF((cur) => ({
-          ...cur,
-          latitude: pos.coords.latitude.toFixed(6),
-          longitude: pos.coords.longitude.toFixed(6),
-        }))
-        setMessage(`Location found (accurate to about ${Math.round(pos.coords.accuracy)} m). Press Save to keep it.`)
-      },
-      () => setError('Could not get your location. Allow location access for this site and try again.'),
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
-    )
+    try {
+      const location = await getLocation()
+      setF((cur) => ({
+        ...cur,
+        latitude: location.latitude.toFixed(6),
+        longitude: location.longitude.toFixed(6),
+      }))
+      setMessage(`Location found (accurate to about ${Math.round(location.accuracy_m)} m). Press Save to keep it.`)
+    } catch (e) {
+      setError(e.message)
+    }
   }
 
   async function save(clear = false) {

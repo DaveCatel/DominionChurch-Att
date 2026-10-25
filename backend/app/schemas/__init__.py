@@ -4,6 +4,7 @@ from datetime import date, datetime, time
 from typing import Literal
 
 from pydantic import (
+    AliasChoices,
     BaseModel,
     ConfigDict,
     EmailStr,
@@ -249,9 +250,18 @@ class ClockIn(BaseModel):
     device_time: datetime | None = None
     # proof of presence, needed when the service checks it
     code: str | None = Field(default=None, max_length=20)
-    latitude: float | None = Field(default=None, ge=-90, le=90)
-    longitude: float | None = Field(default=None, ge=-180, le=180)
-    accuracy_m: float | None = Field(default=None, ge=0, le=1_000_000)
+    latitude: float | None = Field(
+        default=None, ge=-90, le=90, validation_alias=AliasChoices("latitude", "lat")
+    )
+    longitude: float | None = Field(
+        default=None, ge=-180, le=180, validation_alias=AliasChoices("longitude", "lng", "lon")
+    )
+    accuracy_m: float | None = Field(
+        default=None,
+        ge=0,
+        le=1_000_000,
+        validation_alias=AliasChoices("accuracy_m", "accuracy", "accuracyM"),
+    )
     device_token: str | None = Field(default=None, max_length=100)
     # the fingerprint / face confirmation from the phone (see app/services/passkeys.py)
     passkey: dict | None = None
